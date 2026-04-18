@@ -6,12 +6,16 @@
     <title>ISL Translator</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { overflow: hidden; background-color: #0a0e1a; font-family: sans-serif; }
+        body { 
+            overflow: hidden; 
+            background: transparent !important; 
+            font-family: sans-serif; 
+        }
         canvas { display: block; }
 
         #load-overlay {
             position: fixed; inset: 0;
-            background: #0a0e1a;
+            background: rgba(10, 14, 26, 0.9);
             display: flex; flex-direction: column;
             align-items: center; justify-content: center;
             z-index: 200;
@@ -20,14 +24,14 @@
         #load-overlay.hidden { opacity: 0; pointer-events: none; }
 
         #load-logo {
-            font-size: 48px; font-weight: 800; letter-spacing: 2px;
+            font-size: 40px; font-weight: 800; letter-spacing: 2px;
             background: linear-gradient(135deg, #6c63ff, #00e5ff);
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            margin-bottom: 32px;
+            margin-bottom: 24px;
         }
         #load-track {
-            width: 220px; height: 4px;
-            background: rgba(255,255,255,0.12);
+            width: 180px; height: 3px;
+            background: rgba(255,255,255,0.1);
             border-radius: 999px; overflow: hidden;
         }
         #load-bar {
@@ -36,40 +40,15 @@
             border-radius: 999px;
             transition: width 0.2s ease;
         }
-        #load-tip {
-            margin-top: 18px;
-            color: rgba(255,255,255,0.4);
-            font-size: 13px;
-            letter-spacing: 0.5px;
-        }
-
-        /* Current word label */
-        #current-word {
-            position: fixed;
-            bottom: 28px; left: 50%;
-            transform: translateX(-50%);
-            color: #f1c40f;
-            font-size: 34px;
-            font-weight: 800;
-            z-index: 100;
-            text-shadow: 0 2px 12px rgba(0,0,0,0.7);
-            letter-spacing: 2px;
-            display: none;
-        }
-        #current-word.visible { display: block; }
     </style>
 </head>
 <body>
 
-<!-- Loading overlay -->
+<!-- Minimal Loading overlay -->
 <div id="load-overlay">
     <div id="load-logo">ISL</div>
     <div id="load-track"><div id="load-bar"></div></div>
-    <div id="load-tip">Loading avatar…</div>
 </div>
-
-<!-- Current sign word -->
-<div id="current-word"></div>
 
 <!-- THREE.JS — injected inline by Flutter (_loadInlinedHtml) -->
 <script>/* THREE_PLACEHOLDER */</script>
@@ -78,19 +57,21 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// SCENE SETUP  (mirrors source/index.html exactly)
+// SCENE SETUP
 // ─────────────────────────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0e1a);
+scene.background = null; // Transparent background
 
 const camera = new THREE.PerspectiveCamera(
-    75, window.innerWidth / window.innerHeight, 0.1, 1000
+    45, window.innerWidth / window.innerHeight, 0.1, 1000
 );
-camera.position.set(0, 1.5, 1.2);
+// Start at a default position; we re-center once model loads
+camera.position.set(0, 0.6, 5.5);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000000, 0); // Transparent black
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
@@ -105,7 +86,7 @@ window.addEventListener('resize', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FACIAL-EXPRESSION DICTIONARY  (from source/index.html)
+// FACIAL-EXPRESSION DICTIONARY
 // ─────────────────────────────────────────────────────────────────────────────
 const faceDictionary = {
     'neutral'  : {},
@@ -129,9 +110,6 @@ let rightArmBone = null;
 let leftArmBone  = null;
 let headBone     = null;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NMM  (Non-Manual Markers — face + head)
-// ─────────────────────────────────────────────────────────────────────────────
 function applyNMM(nmmData) {
     if (!nmmData || !avatar) return;
 
@@ -156,16 +134,17 @@ function applyNMM(nmmData) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ANIMATION ENGINE  (Frame-based lerp — same style as source/index.html)
+// ANIMATION ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
 
-let activeSign       = null;  // current sign object (from Flutter JSON)
+let activeSign       = null;
 let signStartTime    = 0;
-let sequenceQueue    = [];    // array of sign objects
+let sequenceQueue    = [];
 let sequenceIndex    = 0;
 let isPlayingSequence = false;
-let loopSequence     = false; // Flutter controls looping
+let loopSequence      = true;  
+let currentSignsHash  = '';
 
 function lerp(start, end, t) { return start + (end - start) * t; }
 
@@ -174,7 +153,7 @@ function animate() {
 
     if (isPlayingSequence && activeSign && avatar) {
         const elapsed = clock.getElapsedTime() - signStartTime;
-        const duration = activeSign.duration_ms / 1000;   // convert ms → s
+        const duration = activeSign.duration_ms / 1000;
 
         if (elapsed >= duration) {
             sequenceIndex++;
@@ -184,8 +163,6 @@ function animate() {
                 } else {
                     isPlayingSequence = false;
                     activeSign = null;
-                    document.getElementById('current-word').classList.remove('visible');
-                    // Notify Flutter
                     if (window.FlutterBridge) {
                         FlutterBridge.postMessage(JSON.stringify({ type: 'sequenceCompleted' }));
                     }
@@ -196,24 +173,17 @@ function animate() {
             activeSign = nextSign;
             signStartTime = clock.getElapsedTime();
 
-            const wordEl = document.getElementById('current-word');
-            wordEl.textContent = nextSign.gloss;
-            wordEl.classList.add('visible');
-
             applyNMM(nextSign.nmm);
 
-            // Notify Flutter which sign index started
             if (window.FlutterBridge) {
                 FlutterBridge.postMessage(JSON.stringify({ type: 'signStarted', index: sequenceIndex }));
             }
         } else {
-            // Lerp between keyframes
             const frames = activeSign.keyframes;
             let frameA = frames[0];
             let frameB = frames[frames.length - 1];
 
             for (let i = 0; i < frames.length - 1; i++) {
-                // keyframes use 'time' in seconds (Flutter sends as-is)
                 if (elapsed >= frames[i].time && elapsed <= frames[i + 1].time) {
                     frameA = frames[i];
                     frameB = frames[i + 1];
@@ -251,24 +221,20 @@ animate();
 // FLUTTER → JS API
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Called by Flutter with a JSON array of EnrichedSign objects:
- * [{ gloss, duration_ms, keyframes: [{time, RightHand?, LeftHand?}], nmm: {face, head} }]
- */
 window.playSequence = function(signsJson) {
     const signs = (typeof signsJson === 'string') ? JSON.parse(signsJson) : signsJson;
     if (!signs || signs.length === 0) return;
 
-    sequenceQueue    = signs;
-    sequenceIndex    = 0;
-    isPlayingSequence = true;
-    loopSequence     = false;         // no auto-loop from Flutter
-    activeSign       = signs[0];
-    signStartTime    = clock.getElapsedTime();
+    const newHash = JSON.stringify(signs);
+    if (newHash === currentSignsHash && isPlayingSequence) return;
+    currentSignsHash = newHash;
 
-    const wordEl = document.getElementById('current-word');
-    wordEl.textContent = signs[0].gloss;
-    wordEl.classList.add('visible');
+    sequenceQueue     = signs;
+    sequenceIndex     = 0;
+    isPlayingSequence = true;
+    loopSequence      = true;   
+    activeSign        = signs[0];
+    signStartTime     = clock.getElapsedTime();
 
     applyNMM(signs[0].nmm);
 
@@ -277,12 +243,11 @@ window.playSequence = function(signsJson) {
     }
 };
 
-/** Reset avatar to neutral pose */
 window.resetAvatar = function() {
     isPlayingSequence = false;
+    currentSignsHash = '';
     activeSign = null;
     sequenceQueue = [];
-    document.getElementById('current-word').classList.remove('visible');
     applyNMM({ face: 'neutral', head: 'neutral' });
     if (rightArmBone) rightArmBone.rotation.set(0, 0, 0);
     if (leftArmBone)  leftArmBone.rotation.set(0, 0, 0);
@@ -290,7 +255,7 @@ window.resetAvatar = function() {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GLB LOADING  — Flutter pushes base64 chunks → assembleAndLoadGLB()
+// GLB LOADING
 // ─────────────────────────────────────────────────────────────────────────────
 window._glbChunks = [];
 
@@ -299,9 +264,8 @@ window.assembleAndLoadGLB = function() {
     if (lb) lb.style.width = '95%';
 
     const b64 = window._glbChunks.join('');
-    window._glbChunks = []; // free memory
+    window._glbChunks = []; 
 
-    // base64 → ArrayBuffer
     const binStr = atob(b64);
     const len    = binStr.length;
     const bytes  = new Uint8Array(len);
@@ -312,7 +276,6 @@ window.assembleAndLoadGLB = function() {
         avatar = gltf.scene;
         scene.add(avatar);
 
-        // Bone discovery — try both ReadyPlayerMe and Mixamo naming
         rightArmBone = avatar.getObjectByName('RightArm')
                     || avatar.getObjectByName('mixamorigRightArm');
         leftArmBone  = avatar.getObjectByName('LeftArm')
@@ -320,28 +283,35 @@ window.assembleAndLoadGLB = function() {
         headBone     = avatar.getObjectByName('Head')
                     || avatar.getObjectByName('mixamorigHead');
 
-        // Centre the avatar
-        const box = new THREE.Box3().setFromObject(avatar);
+        const box    = new THREE.Box3().setFromObject(avatar);
+        const size   = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
+
+        // Target height fit for typical portrait view
+        const targetHeight = 2.4;
+        const scale = targetHeight / size.y;
+        avatar.scale.setScalar(scale);
+
+        box.setFromObject(avatar);
+        box.getCenter(center);
         avatar.position.sub(center);
-        avatar.position.y += (box.max.y - box.min.y) / 2;
+        
+        // Push slightly higher to fit upper body
+        avatar.position.y += 0.3; 
+
+        // Initial camera gaze
+        camera.lookAt(0, 0.7, 0);
 
         if (lb) lb.style.width = '100%';
 
-        // Hide loader
         setTimeout(() => {
             const overlay = document.getElementById('load-overlay');
             if (overlay) overlay.classList.add('hidden');
         }, 400);
 
-        // Notify Flutter: avatar is ready to receive signs
         if (window.FlutterBridge) {
             FlutterBridge.postMessage(JSON.stringify({ type: 'ready' }));
         }
-
-        console.log('✅ Avatar ready. rightArm:', rightArmBone?.name ?? 'NOT FOUND',
-                    'leftArm:', leftArmBone?.name ?? 'NOT FOUND',
-                    'head:', headBone?.name ?? 'NOT FOUND');
     }, (err) => {
         console.error('GLB parse error:', err);
         if (lb) { lb.style.background = '#e74c3c'; lb.style.width = '100%'; }

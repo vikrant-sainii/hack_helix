@@ -187,11 +187,10 @@ class _IslScreenState extends State<IslScreen>
     return BlocListener<IslBloc, IslState>(
       listener: (ctx, state) {
         if (state is IslPlayingSequence) {
-          _sequenceSent = false; // reset guard for a new sequence
           _playSigns(state.signs);
         }
         if (state is IslIdle) {
-          _sequenceSent = false;
+          _sequenceSent = false; // Reset ONLY on idle so next sequence can play
           if (_webReady) _webCtrl.runJavaScript('window.resetAvatar()');
         }
       },
@@ -206,11 +205,25 @@ class _IslScreenState extends State<IslScreen>
                   child: Visibility(
                     visible: state is IslPlayingSequence || state is IslSequenceDone,
                     maintainState: true,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 140, bottom: 80),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(24),
-                        child: WebViewWidget(controller: _webCtrl),
+                    child: Align(
+                      alignment: Alignment.center,
+                      child: Container(
+                        margin: const EdgeInsets.fromLTRB(20, 100, 20, 100),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0A0E1A),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.4),
+                              blurRadius: 20,
+                              spreadRadius: 5,
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(30),
+                          child: WebViewWidget(controller: _webCtrl),
+                        ),
                       ),
                     ),
                   ),
@@ -475,9 +488,27 @@ class _IslScreenState extends State<IslScreen>
             ),
           ),
         ),
-        const SizedBox(height: 8),
         // Spoken text display moves up, WebView is now in the persistent Stack above
-        const SizedBox(height: 20),
+        const Spacer(),
+        // ── Current Word Display (Replaces JS one) ──────────────────────────
+        if (!isDone && state is IslPlayingSequence)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Text(
+              state.currentSign.gloss,
+              style: const TextStyle(
+                color: Color(0xFFF1C40F),
+                fontSize: 28,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2.0,
+              ),
+            ),
+          ),
+        const SizedBox(height: 120),
         // Done: Show replay option
         if (isDone) ...[
           const SizedBox(height: 12),
