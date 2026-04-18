@@ -30,8 +30,18 @@ class N8nService {
       throw Exception('n8n webhook error: ${response.statusCode}');
     }
 
-    final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
-    return data
+    final dynamic decoded = jsonDecode(response.body);
+    final List<dynamic> list;
+
+    if (decoded is List) {
+      list = decoded;
+    } else if (decoded is Map<String, dynamic> && decoded.containsKey('sequence')) {
+      list = decoded['sequence'] as List<dynamic>;
+    } else {
+      throw Exception('Unexpected n8n response format: $decoded');
+    }
+
+    return list
         .map((e) => GlossItem.fromJson(e as Map<String, dynamic>))
         .toList();
   }

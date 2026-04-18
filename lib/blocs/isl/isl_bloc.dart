@@ -152,11 +152,18 @@ class IslBloc extends Bloc<IslEvent, IslState> {
     // Brief artificial delay to show "Processing..." state
     await Future.delayed(const Duration(milliseconds: 600));
 
-    // ── Use dummy enriched signs for now ─────────────────────────────────
-    // TODO: Replace _getDummyEnrichedSigns() with real FastAPI /enrich call:
-    //   final glosses = await _repository.fetchGlosses(spokenText);
-    //   final signs = await _repository.enrichGlosses(glosses);
-    final signs = _getDummyEnrichedSigns(spokenText);
+    final List<EnrichedSign> signs;
+    try {
+      signs = await _repository.processText(spokenText);
+      if (signs.isEmpty) {
+        emit(const IslError('No signs found for this text.'));
+        return;
+      }
+    } catch (e) {
+      developer.log('IslBloc: Error fetching signs: $e');
+      emit(IslError('Failed to connect to ISL backend: $e'));
+      return;
+    }
 
     emit(IslPlayingSequence(
       signs: signs,
@@ -197,57 +204,6 @@ class IslBloc extends Bloc<IslEvent, IslState> {
     emit(IslError(event.message));
   }
 
-  // ── Dummy enriched signs ─────────────────────────────────────────────────
-  // These mirror the exact format returned by FastAPI /enrich:
-  // { gloss, duration_ms (ms!), keyframes, nmm }
-  //
-  // Duration is ALREADY in ms here — FastAPI converts seconds→ms.
-  // Three.js will receive these ms values directly from window.playSequence().
-
-  List<EnrichedSign> _getDummyEnrichedSigns(String spokenText) {
-    return [
-      EnrichedSign(
-        gloss: 'LIFE',
-        durationMs: 1500, // ms — matches n8n duration:1.5 * 1000
-        keyframes: [
-          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0]},
-          {'time': 0.7, 'RightHand': [0.5, 1.0, 0.0]},
-          {'time': 1.5, 'RightHand': [1.0, 1.2, 0.0]},
-        ],
-        nmm: {'face': 'serious', 'head': 'neutral'},
-      ),
-      EnrichedSign(
-        gloss: 'MY',
-        durationMs: 1000, // ms
-        keyframes: [
-          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0]},
-          {'time': 0.5, 'RightHand': [0.2, 0.8, 0.0]},
-          {'time': 1.0, 'RightHand': [0.3, 1.0, 0.0]},
-        ],
-        nmm: {'face': 'neutral', 'head': 'neutral'},
-      ),
-      EnrichedSign(
-        gloss: 'DANGER',
-        durationMs: 2000, // ms
-        keyframes: [
-          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0], 'LeftHand': [0.0, 0.0, 0.0]},
-          {'time': 1.0, 'RightHand': [0.8, 1.5, 0.3], 'LeftHand': [-0.4, 1.2, -0.2]},
-          {'time': 2.0, 'RightHand': [1.2, 0.5, 0.6], 'LeftHand': [-0.8, 0.4, -0.4]},
-        ],
-        nmm: {'face': 'alert', 'head': 'forward'},
-      ),
-      EnrichedSign(
-        gloss: 'HELP',
-        durationMs: 1800, // ms
-        keyframes: [
-          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0], 'LeftHand': [0.0, 0.0, 0.0]},
-          {'time': 0.9, 'RightHand': [0.3, 1.2, 0.0], 'LeftHand': [-0.1, 0.8, 0.0]},
-          {'time': 1.8, 'RightHand': [0.5, 0.9, 0.0], 'LeftHand': [-0.2, 0.6, 0.0]},
-        ],
-        nmm: {'face': 'serious', 'head': 'neutral'},
-      ),
-    ];
-  }
 
   @override
   Future<void> close() {

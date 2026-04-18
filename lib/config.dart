@@ -4,12 +4,12 @@ class AppConfig {
   AppConfig._();
 
   /// Your n8n webhook URL — update before running
-  static const String n8nWebhookUrl = 'YOUR_N8N_WEBHOOK_URL';
+  static const String n8nWebhookUrl = 'https://projectnumcr7.app.n8n.cloud/webhook-test/isl-input';
 
   /// FastAPI backend base URL
   /// Local dev: http://localhost:8000
-  /// Deployed: https://your-backend.railway.app
-  static const String fastApiBaseUrl = 'http://localhost:8000';
+  /// Deployed: https://hack-helix.onrender.com
+  static const String fastApiBaseUrl = 'https://hack-helix.onrender.com';
 
   /// FastAPI enrich endpoint
   static const String enrichEndpoint = '$fastApiBaseUrl/enrich';
