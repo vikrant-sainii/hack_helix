@@ -2,17 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>ISL Avatar</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0a0e1a; overflow: hidden; font-family: sans-serif; }
-    #canvas-container { width: 100vw; height: 100vh; position: relative; }
-    canvas { display: block; }
+    body { background: #0a0e1a; overflow: hidden; touch-action: none; }
+    #c { display: block; width: 100vw; height: 100vh; }
 
-    /* Subtitle / Gloss Bar */
-    #subtitle-bar {
-      position: absolute;
+    /* ── Subtitle / Gloss Bar ── */
+    #gloss-bar {
+      position: fixed;
       bottom: 16px;
       left: 50%;
       transform: translateX(-50%);
@@ -21,133 +20,511 @@
       flex-wrap: wrap;
       justify-content: center;
       padding: 8px 16px;
-      background: rgba(0,0,0,0.5);
-      border-radius: 24px;
-      backdrop-filter: blur(8px);
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 28px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      min-height: 40px;
+      transition: opacity 0.4s ease;
     }
-    .gloss-chip {
-      padding: 4px 12px;
-      border-radius: 12px;
+    .chip {
+      padding: 5px 14px;
+      border-radius: 14px;
       font-size: 13px;
-      font-weight: 600;
-      color: rgba(255,255,255,0.4);
-      border: 1px solid rgba(255,255,255,0.1);
-      transition: all 0.3s ease;
+      font-weight: 700;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      letter-spacing: 1px;
+      color: rgba(255, 255, 255, 0.35);
+      border: 1.5px solid rgba(255, 255, 255, 0.08);
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      transform: scale(1);
     }
-    .gloss-chip.active {
-      color: #ffffff;
-      background: #6c63ff;
+    .chip.active {
+      color: #fff;
+      background: rgba(108, 99, 255, 0.85);
       border-color: #6c63ff;
-      box-shadow: 0 0 12px rgba(108,99,255,0.6);
+      box-shadow: 0 0 16px rgba(108, 99, 255, 0.7);
+      transform: scale(1.12);
     }
-    .gloss-chip.done {
-      color: rgba(255,255,255,0.6);
-      border-color: rgba(255,255,255,0.2);
+    .chip.done {
+      color: rgba(255, 255, 255, 0.5);
+      border-color: rgba(255, 255, 255, 0.15);
     }
 
-    /* Loading overlay */
+    /* ── Loading overlay ── */
     #loading {
-      position: absolute;
+      position: fixed;
       inset: 0;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      flex-direction: column;
       gap: 16px;
-      color: rgba(255,255,255,0.6);
-      font-size: 14px;
+      background: #0a0e1a;
+      z-index: 10;
+      transition: opacity 0.6s ease;
     }
+    #loading.hidden { opacity: 0; pointer-events: none; }
     .spinner {
-      width: 40px; height: 40px;
-      border: 3px solid rgba(108,99,255,0.3);
+      width: 38px; height: 38px;
+      border: 3px solid rgba(108, 99, 255, 0.25);
       border-top-color: #6c63ff;
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      animation: spin 0.75s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    #loading span {
+      font-family: -apple-system, sans-serif;
+      font-size: 13px;
+      color: rgba(255,255,255,0.4);
+      letter-spacing: 1px;
+    }
   </style>
 </head>
 <body>
-<div id="canvas-container">
-  <div id="loading">
-    <div class="spinner"></div>
-    <span>Loading avatar...</span>
-  </div>
-  <div id="subtitle-bar"></div>
-</div>
 
-<!--
-  TODO: Implement Three.js avatar with:
-  - Mixamo Y-Bot GLTF
-  - TWEEN.js bone rotations
-  - window.playSequence(signs) entry point
-  - FlutterBridge.postMessage() callbacks
-  - NMM blendshape mapping
-  - Idle breathing animation
--->
+<canvas id="c"></canvas>
+<div id="gloss-bar"></div>
+<div id="loading"><div class="spinner"></div><span>LOADING AVATAR</span></div>
+
+<!-- Three.js r158 + TWEEN.js via jsDelivr -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tweenjs/tween.js@18.6.4/dist/tween.umd.js"></script>
+
 <script>
-  // ─── Placeholder Bridge ────────────────────────────────────────────────────
-  // window.playSequence will be fully implemented in the Three.js build phase.
-  // This stub lets the Flutter WebView load without errors.
+// ═══════════════════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════════════════
+const AVATAR_SCALE   = 1.0;
+const CAMERA_Z       = 3.2;
+const BG_COLOR       = 0x0a0e1a;
+const BODY_COLOR     = 0x1de9b6;   // teal
+const BODY_EMISSIVE  = 0x006655;
+const JOINT_COLOR    = 0x00bcd4;
+const JOINT_EMISSIVE = 0x00455a;
+const HEAD_COLOR     = 0xffe0b2;   // skin-ish
+const HEAD_EMISSIVE  = 0x5d4037;
 
-  let _currentSigns = [];
-  let _currentIndex = 0;
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDERER + SCENE + CAMERA
+// ═══════════════════════════════════════════════════════════════════════════
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
 
-  window.playSequence = function(signs) {
-    console.log('[ISL] playSequence called with', signs.length, 'signs');
-    _currentSigns = signs;
-    _currentIndex = 0;
-    _updateSubtitleBar(signs, -1);
-    _playNext();
-  };
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(BG_COLOR);
+scene.fog = new THREE.FogExp2(BG_COLOR, 0.08);
 
-  function _playNext() {
-    if (_currentIndex >= _currentSigns.length) {
-      // Notify Flutter sequence completed
-      if (window.FlutterBridge) {
-        FlutterBridge.postMessage(JSON.stringify({ type: 'sequenceCompleted' }));
-      }
-      _updateSubtitleBar(_currentSigns, -1);
-      return;
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0.5, CAMERA_Z);
+camera.lookAt(0, 0.5, 0);
+
+// ── Resize handler ─────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIGHTING
+// ═══════════════════════════════════════════════════════════════════════════
+scene.add(new THREE.AmbientLight(0x223355, 2.0));
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
+keyLight.position.set(2, 4, 3);
+keyLight.castShadow = true;
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0x00e5ff, 0.6);
+fillLight.position.set(-3, 1, 1);
+scene.add(fillLight);
+
+const rimLight = new THREE.PointLight(0x6c63ff, 2.0, 5);
+rimLight.position.set(0, 3, -1);
+scene.add(rimLight);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GRID (floor)
+// ═══════════════════════════════════════════════════════════════════════════
+const grid = new THREE.GridHelper(10, 20, 0x1a2540, 0x0f1829);
+grid.position.y = -1.6;
+scene.add(grid);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MATERIALS
+// ═══════════════════════════════════════════════════════════════════════════
+function makeMat(color, emissive, shininess = 80) {
+  return new THREE.MeshPhongMaterial({ color, emissive, shininess });
+}
+const matBody   = makeMat(BODY_COLOR,  BODY_EMISSIVE,  100);
+const matJoint  = makeMat(JOINT_COLOR, JOINT_EMISSIVE, 150);
+const matHead   = makeMat(HEAD_COLOR,  HEAD_EMISSIVE,   60);
+const matOutline = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+function mesh(geo, mat, parent, px=0, py=0, pz=0, sx=1, sy=1, sz=1) {
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = true;
+  m.position.set(px, py, pz);
+  m.scale.set(sx, sy, sz);
+  parent.add(m);
+  return m;
+}
+function outline(geo, parent, px=0, py=0, pz=0, s=1.06) {
+  const m = new THREE.Mesh(geo, matOutline);
+  m.position.set(px, py, pz);
+  m.scale.setScalar(s);
+  parent.add(m);
+}
+function pivot(parent, px=0, py=0, pz=0) {
+  const g = new THREE.Group();
+  g.position.set(px, py, pz);
+  parent.add(g);
+  return g;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AVATAR CONSTRUCTION
+// ═══════════════════════════════════════════════════════════════════════════
+const root = new THREE.Group();
+root.scale.setScalar(AVATAR_SCALE);
+root.position.set(0, -0.8, 0);
+scene.add(root);
+
+// ── GEO CACHE ──────────────────────────────────────────────────────────────
+const geoTorso    = new THREE.BoxGeometry(0.52, 0.70, 0.24);
+const geoChest    = new THREE.BoxGeometry(0.44, 0.18, 0.22);
+const geoShoulder = new THREE.SphereGeometry(0.09, 8, 6);
+const geoUpperArm = new THREE.CylinderGeometry(0.07, 0.065, 0.35, 8);
+const geoElbow    = new THREE.SphereGeometry(0.07, 8, 6);
+const geoForeArm  = new THREE.CylinderGeometry(0.062, 0.055, 0.30, 8);
+const geoWrist    = new THREE.SphereGeometry(0.058, 8, 6);
+const geoHand     = new THREE.BoxGeometry(0.13, 0.10, 0.07);
+const geoHead     = new THREE.SphereGeometry(0.21, 14, 10);
+const geoNeck     = new THREE.CylinderGeometry(0.07, 0.08, 0.12, 8);
+const geoPelvis   = new THREE.BoxGeometry(0.42, 0.14, 0.20);
+const geoThigh    = new THREE.CylinderGeometry(0.09, 0.08, 0.40, 8);
+const geoKneeCap  = new THREE.SphereGeometry(0.085, 8, 6);
+const geoShin     = new THREE.CylinderGeometry(0.075, 0.065, 0.36, 8);
+const geoFoot     = new THREE.BoxGeometry(0.12, 0.07, 0.22);
+
+// ── TORSO ──────────────────────────────────────────────────────────────────
+const torsoGroup = pivot(root, 0, 0.7, 0);
+mesh(geoTorso, matBody, torsoGroup, 0, 0.35, 0);
+mesh(geoChest, matJoint, torsoGroup, 0, 0.58, 0.03); // chest detail
+outline(geoTorso, torsoGroup, 0, 0.35, 0, 1.04);
+
+// ── HEAD ───────────────────────────────────────────────────────────────────
+const neckGroup = pivot(torsoGroup, 0, 0.72, 0);
+mesh(geoNeck, matJoint, neckGroup, 0, 0.06, 0);
+
+const headGroup = pivot(neckGroup, 0, 0.18, 0);
+mesh(geoHead, matHead, headGroup, 0, 0.21, 0);
+outline(geoHead, headGroup, 0, 0.21, 0, 1.04);
+
+// Eye dots
+const geoEye = new THREE.SphereGeometry(0.03, 6, 4);
+const matEye = new THREE.MeshBasicMaterial({ color: 0x0a0e1a });
+const eyeL   = new THREE.Mesh(geoEye, matEye);
+const eyeR   = new THREE.Mesh(geoEye, matEye);
+eyeL.position.set(-0.08, 0.24, 0.19);
+eyeR.position.set( 0.08, 0.24, 0.19);
+headGroup.add(eyeL, eyeR);
+
+// ── RIGHT ARM ──────────────────────────────────────────────────────────────
+const rShoulder = pivot(torsoGroup, 0.33, 0.65, 0);
+mesh(geoShoulder, matJoint, rShoulder, 0, 0, 0);
+mesh(geoUpperArm, matBody, rShoulder, 0, -0.18, 0);
+
+const rElbow = pivot(rShoulder, 0, -0.36, 0);
+mesh(geoElbow, matJoint, rElbow, 0, 0, 0);
+mesh(geoForeArm, matBody, rElbow, 0, -0.16, 0);
+
+const rWrist = pivot(rElbow, 0, -0.32, 0);
+mesh(geoWrist, matJoint, rWrist, 0, 0, 0);
+mesh(geoHand, matJoint, rWrist, 0, -0.07, 0);
+
+// ── LEFT ARM ───────────────────────────────────────────────────────────────
+const lShoulder = pivot(torsoGroup, -0.33, 0.65, 0);
+mesh(geoShoulder, matJoint, lShoulder, 0, 0, 0);
+mesh(geoUpperArm, matBody, lShoulder, 0, -0.18, 0);
+
+const lElbow = pivot(lShoulder, 0, -0.36, 0);
+mesh(geoElbow, matJoint, lElbow, 0, 0, 0);
+mesh(geoForeArm, matBody, lElbow, 0, -0.16, 0);
+
+const lWrist = pivot(lElbow, 0, -0.32, 0);
+mesh(geoWrist, matJoint, lWrist, 0, 0, 0);
+mesh(geoHand, matJoint, lWrist, 0, -0.07, 0);
+
+// ── PELVIS & LEGS ──────────────────────────────────────────────────────────
+const pelvisGroup = pivot(torsoGroup, 0, -0.02, 0);
+mesh(geoPelvis, matBody, pelvisGroup, 0, 0, 0);
+
+function buildLeg(parent, side) {
+  const x = side * 0.13;
+  const hip = pivot(parent, x, -0.08, 0);
+  mesh(geoThigh, matBody, hip, 0, -0.20, 0);
+  const knee = pivot(hip, 0, -0.41, 0);
+  mesh(geoKneeCap, matJoint, knee, 0, 0, 0);
+  mesh(geoShin, matBody, knee, 0, -0.19, 0);
+  const ankle = pivot(knee, 0, -0.38, 0);
+  mesh(geoFoot, matJoint, ankle, 0, -0.035, 0.05);
+  return hip;
+}
+const rHip = buildLeg(pelvisGroup,  1);
+const lHip = buildLeg(pelvisGroup, -1);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PIVOT MAP — maps keyframe bone keys → Three.js pivot groups
+// "RightHand" drives the right shoulder (whole arm motion)
+// "LeftHand"  drives the left shoulder
+// "RightArm"  drives the right elbow (forearm curl)
+// "LeftArm"   drives the left elbow
+// ═══════════════════════════════════════════════════════════════════════════
+const pivotMap = {
+  RightHand:    rShoulder,
+  LeftHand:     lShoulder,
+  RightArm:     rElbow,
+  LeftArm:      lElbow,
+  RightForeArm: rWrist,
+  LeftForeArm:  lWrist,
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IDLE REST POSE
+// ═══════════════════════════════════════════════════════════════════════════
+const IDLE_POSE = {
+  RightHand: [0.0,  0.0, -0.15],
+  LeftHand:  [0.0,  0.0,  0.15],
+  RightArm:  [0.0,  0.0,  0.0],
+  LeftArm:   [0.0,  0.0,  0.0],
+};
+
+function applyPose(pose, ms = 400) {
+  for (const [key, rot] of Object.entries(pose)) {
+    const p = pivotMap[key];
+    if (!p) continue;
+    new TWEEN.Tween({ x: p.rotation.x, y: p.rotation.y, z: p.rotation.z })
+      .to({ x: rot[0], y: rot[1], z: rot[2] }, ms)
+      .easing(TWEEN.Easing.Sinusoidal.Out)
+      .onUpdate(o => p.rotation.set(o.x, o.y, o.z))
+      .start();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NMM (Non-Manual Markers) — head/face expressions
+// ═══════════════════════════════════════════════════════════════════════════
+const NMM_PRESETS = {
+  serious: () => { headGroup.rotation.x = 0.08; headGroup.rotation.y = 0;  },
+  alert:   () => { headGroup.rotation.x = -0.10; headGroup.rotation.y = 0.05; },
+  happy:   () => { headGroup.rotation.x = -0.05; headGroup.rotation.y = 0;  },
+  neutral: () => { headGroup.rotation.x = 0;    headGroup.rotation.y = 0;  },
+  forward: () => { headGroup.rotation.x = 0.12;  headGroup.rotation.y = 0;  },
+  nod:     () => { headGroup.rotation.x = 0.1;   headGroup.rotation.y = 0;  },
+};
+
+function applyNMM(nmm) {
+  const face = (nmm && nmm.face) ? nmm.face : 'neutral';
+  const fn = NMM_PRESETS[face] || NMM_PRESETS.neutral;
+  fn();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUBTITLE / GLOSS BAR
+// ═══════════════════════════════════════════════════════════════════════════
+const glossBar = document.getElementById('gloss-bar');
+
+function updateGlossBar(signs, activeIdx) {
+  glossBar.innerHTML = signs.map((s, i) => {
+    let cls = 'chip';
+    if (i === activeIdx) cls += ' active';
+    else if (i < activeIdx) cls += ' done';
+    return `<span class="${cls}">${s.gloss}</span>`;
+  }).join('');
+}
+
+function clearGlossBar() { glossBar.innerHTML = ''; }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SLEEP HELPER
+// ═══════════════════════════════════════════════════════════════════════════
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SIGN PLAYER
+// ═══════════════════════════════════════════════════════════════════════════
+let _isPlaying = false;
+
+async function playSign(sign) {
+  const { keyframes, duration_ms, nmm } = sign;
+
+  // Apply NMM expression
+  applyNMM(nmm);
+
+  // Sort keyframes by time
+  const kfs = [...keyframes].sort((a, b) => a.time - b.time);
+
+  // Animate through consecutive keyframe pairs
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const kf1 = kfs[i];
+    const kf2 = kfs[i + 1];
+    const segMs = (kf2.time - kf1.time) * 1000;
+
+    // For each joint in kf2, tween from kf1 value (or current)
+    for (const [key, pivot] of Object.entries(pivotMap)) {
+      const to = kf2[key];
+      if (!to) continue;
+      const from = kf1[key] || [pivot.rotation.x, pivot.rotation.y, pivot.rotation.z];
+      new TWEEN.Tween({ x: from[0], y: from[1], z: from[2] })
+        .to({ x: to[0], y: to[1], z: to[2] }, segMs)
+        .easing(TWEEN.Easing.Sinusoidal.InOut)
+        .onUpdate(o => pivot.rotation.set(o.x, o.y, o.z))
+        .start();
     }
 
-    const sign = _currentSigns[_currentIndex];
-    console.log('[ISL] Playing sign:', sign.gloss, 'for', sign.duration_ms, 'ms');
+    await sleep(segMs);
+  }
 
-    // Notify Flutter which sign started
-    if (window.FlutterBridge) {
-      FlutterBridge.postMessage(JSON.stringify({
-        type: 'signStarted',
-        index: _currentIndex
-      }));
+  // Hold final pose briefly
+  await sleep(Math.max(0, duration_ms - (kfs[kfs.length - 1].time * 1000)));
+}
+
+// ── Main entry point called from Flutter ───────────────────────────────────
+window.playSequence = async function(signs) {
+  if (_isPlaying) return;
+  _isPlaying = true;
+
+  console.log('[ISL] playSequence — ' + signs.length + ' signs');
+  updateGlossBar(signs, -1);
+  applyPose(IDLE_POSE, 200);
+
+  for (let i = 0; i < signs.length; i++) {
+    const sign = signs[i];
+    console.log('[ISL] signing: ' + sign.gloss + ' (' + sign.duration_ms + 'ms)');
+
+    // Notify Flutter → IslBloc.add(IslSignStarted(i))
+    _postToFlutter({ type: 'signStarted', index: i });
+
+    updateGlossBar(signs, i);
+    await playSign(sign);
+
+    // Brief inter-sign transition back toward idle
+    applyPose(IDLE_POSE, 250);
+    await sleep(220);
+  }
+
+  // Return to full idle
+  applyPose(IDLE_POSE, 500);
+  applyNMM({ face: 'neutral' });
+  clearGlossBar();
+
+  _isPlaying = false;
+  _postToFlutter({ type: 'sequenceCompleted' });
+  console.log('[ISL] sequence complete');
+};
+
+// ── Reset avatar back to idle pose ─────────────────────────────────────────
+window.resetAvatar = function() {
+  _isPlaying = false;
+  applyPose(IDLE_POSE, 400);
+  applyNMM({ face: 'neutral' });
+  clearGlossBar();
+};
+
+// ── Flutter bridge ──────────────────────────────────────────────────────────
+function _postToFlutter(obj) {
+  try {
+    if (typeof FlutterBridge !== 'undefined') {
+      FlutterBridge.postMessage(JSON.stringify(obj));
     }
-
-    _updateSubtitleBar(_currentSigns, _currentIndex);
-
-    // TODO: trigger Three.js bone tweens here
-    // For now, wait duration_ms then play next
-    setTimeout(() => {
-      _currentIndex++;
-      _playNext();
-    }, sign.duration_ms); // duration_ms already in ms from FastAPI — never convert here
+  } catch (e) {
+    console.warn('[ISL] FlutterBridge not available:', e);
   }
+}
 
-  function _updateSubtitleBar(signs, activeIndex) {
-    const bar = document.getElementById('subtitle-bar');
-    if (!bar) return;
-    bar.innerHTML = signs.map((s, i) => {
-      let cls = 'gloss-chip';
-      if (i === activeIndex) cls += ' active';
-      else if (i < activeIndex) cls += ' done';
-      return `<span class="${cls}">${s.gloss}</span>`;
-    }).join('');
+// ═══════════════════════════════════════════════════════════════════════════
+// IDLE ANIMATION
+// ═══════════════════════════════════════════════════════════════════════════
+let _idleTime = 0;
+
+function idleStep(t) {
+  if (_isPlaying) return;
+  _idleTime = t * 0.001;
+
+  // Breathing — subtle torso scale
+  torsoGroup.scale.y = 1.0 + 0.008 * Math.sin(_idleTime * 1.2);
+
+  // Arms gentle rest sway
+  rShoulder.rotation.z = IDLE_POSE.RightHand[2] + 0.02 * Math.sin(_idleTime * 0.8);
+  lShoulder.rotation.z = IDLE_POSE.LeftHand[2]  - 0.02 * Math.sin(_idleTime * 0.8);
+
+  // Head subtle nod
+  headGroup.rotation.y = 0.015 * Math.sin(_idleTime * 0.5);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FLOATING PARTICLES (ambient atmosphere)
+// ═══════════════════════════════════════════════════════════════════════════
+(function buildParticles() {
+  const count   = 120;
+  const geo     = new THREE.BufferGeometry();
+  const pos     = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    pos[i * 3]     = (Math.random() - 0.5) * 8;
+    pos[i * 3 + 1] = Math.random() * 6 - 1;
+    pos[i * 3 + 2] = (Math.random() - 0.5) * 6;
   }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0x6c63ff, size: 0.025, transparent: true, opacity: 0.5 });
+  const pts = new THREE.Points(geo, mat);
+  scene.add(pts);
 
-  // Hide loading overlay once page is ready
-  window.addEventListener('load', () => {
-    const loading = document.getElementById('loading');
-    if (loading) loading.style.display = 'none';
-  });
+  // Drift particles upward slowly
+  let t = 0;
+  function driftParticles() {
+    t += 0.003;
+    const arr = geo.attributes.position.array;
+    for (let i = 0; i < count; i++) {
+      arr[i * 3 + 1] += 0.0012;
+      if (arr[i * 3 + 1] > 5) arr[i * 3 + 1] = -1;
+    }
+    geo.attributes.position.needsUpdate = true;
+  }
+  window._driftParticles = driftParticles;
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════════════
+// Apply initial idle pose
+applyPose(IDLE_POSE, 0);
+
+function animate(t) {
+  requestAnimationFrame(animate);
+  TWEEN.update(t);
+  idleStep(t);
+  if (window._driftParticles) window._driftParticles();
+  renderer.render(scene, camera);
+}
+animate(0);
+
+// ── Hide loading overlay ────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  const loading = document.getElementById('loading');
+  setTimeout(() => {
+    loading.classList.add('hidden');
+    setTimeout(() => loading.remove(), 700);
+    _postToFlutter({ type: 'ready' });
+  }, 800);
+});
 </script>
 </body>
 </html>

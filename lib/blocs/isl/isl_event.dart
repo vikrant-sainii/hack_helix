@@ -9,55 +9,56 @@ abstract class IslEvent extends Equatable {
   List<Object?> get props => [];
 }
 
-/// Triggered when user taps mic and starts speaking.
+/// User tapped mic — begin STT recording.
 class IslStartListening extends IslEvent {
   const IslStartListening();
 }
 
-/// Triggered when STT produces a final transcript.
-class IslTextReceived extends IslEvent {
+/// STT partial result — live text update while user is still speaking.
+class IslLiveTextUpdated extends IslEvent {
   final String text;
-
-  const IslTextReceived(this.text);
+  const IslLiveTextUpdated(this.text);
 
   @override
   List<Object?> get props => [text];
 }
 
-/// Triggered when n8n returns the gloss sequence (intermediate state).
+/// User manually stops mic (tap on red stop button).
+class IslStopListening extends IslEvent {
+  const IslStopListening();
+}
+
+/// Sent by n8n gloss flow — override auto-glossing if needed later.
 class IslGlossesReceived extends IslEvent {
   final List<GlossItem> glosses;
-
   const IslGlossesReceived(this.glosses);
 
   @override
   List<Object?> get props => [glosses];
 }
 
-/// Triggered when the avatar starts playing a specific sign index.
+/// Three.js → Flutter: avatar started signing a specific gloss.
 class IslSignStarted extends IslEvent {
   final int signIndex;
-
   const IslSignStarted(this.signIndex);
 
   @override
   List<Object?> get props => [signIndex];
 }
 
-/// Triggered when the avatar finishes the entire sign sequence.
+/// Three.js → Flutter: avatar finished the entire sign sequence.
 class IslSequenceCompleted extends IslEvent {
   const IslSequenceCompleted();
 }
 
-/// Triggered to reset back to idle state.
+/// Reset back to idle.
 class IslReset extends IslEvent {
   const IslReset();
 }
 
-/// Triggered on any error in the pipeline.
+/// Any pipeline error.
 class IslErrorOccurred extends IslEvent {
   final String message;
-
   const IslErrorOccurred(this.message);
 
   @override

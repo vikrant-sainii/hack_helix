@@ -1,99 +1,191 @@
+import 'dart:async';
+import 'dart:developer' as developer;
+
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+
+import '../../models/enriched_sign.dart';
 import '../../repositories/isl_repository.dart';
 import 'isl_event.dart';
 import 'isl_state.dart';
 
-/// BLoC that manages the full ISL synthesis pipeline:
+/// Internal event — not part of public API.
+/// Dispatched internally when STT finishes (silence or failsafe).
+class _IslSpeechFinished extends IslEvent {
+  final String text;
+  const _IslSpeechFinished(this.text);
+
+  @override
+  List<Object?> get props => [text];
+}
+
+/// BLoC that drives the full ISL synthesis pipeline:
 ///
-/// Flow:
-/// [IslStartListening]    → [IslListening]
-/// [IslTextReceived]      → [IslProcessingText] → calls n8n → [IslEnriching]
-/// [IslGlossesReceived]   → [IslEnriching] → calls FastAPI → [IslPlayingSequence]
-/// [IslSignStarted]       → [IslPlayingSequence] (updates currentIndex)
-/// [IslSequenceCompleted] → [IslSequenceDone]
-/// [IslReset]             → [IslIdle]
-/// [IslErrorOccurred]     → [IslError]
+/// Tap mic
+///   → [IslStartListening] → [IslListening] (live STT text)
+///   → silence detected (1500ms) or failsafe (10s)
+///   → [_IslSpeechFinished] → [IslProcessingText]
+///   → dummy enriched signs loaded → [IslPlayingSequence]
+///   → Three.js avatar signs gloss by gloss → [IslSignStarted] per sign
+///   → all done → [IslSequenceCompleted] → [IslSequenceDone]
+///   → [IslReset] → [IslIdle]
 class IslBloc extends Bloc<IslEvent, IslState> {
   final IslRepository _repository;
+
+  // ── STT ──────────────────────────────────────────────────────────────────
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  Timer? _silenceTimer;  // 1.5s rolling silence detection
+  Timer? _failsafeTimer; // 10s absolute cutoff
+  String _capturedText = '';
 
   IslBloc({required IslRepository repository})
       : _repository = repository,
         super(const IslIdle()) {
     on<IslStartListening>(_onStartListening);
-    on<IslTextReceived>(_onTextReceived);
-    on<IslGlossesReceived>(_onGlossesReceived);
+    on<IslLiveTextUpdated>(_onLiveTextUpdated);
+    on<IslStopListening>(_onStopListening);
+    on<_IslSpeechFinished>(_onSpeechFinished);
     on<IslSignStarted>(_onSignStarted);
     on<IslSequenceCompleted>(_onSequenceCompleted);
     on<IslReset>(_onReset);
     on<IslErrorOccurred>(_onError);
   }
 
-  void _onStartListening(
+  // ── STT: Start ────────────────────────────────────────────────────────────
+
+  Future<void> _onStartListening(
     IslStartListening event,
     Emitter<IslState> emit,
-  ) {
+  ) async {
+    developer.log('IslBloc: _onStartListening');
+    _capturedText = '';
+    _silenceTimer?.cancel();
+    _failsafeTimer?.cancel();
+
+    // Ding to signal start (same pattern as CrisisMatch VoiceAssistant)
+    SystemSound.play(SystemSoundType.click);
     emit(const IslListening());
-  }
 
-  Future<void> _onTextReceived(
-    IslTextReceived event,
-    Emitter<IslState> emit,
-  ) async {
-    emit(IslProcessingText(event.text));
-    try {
-      // Step 1: text → n8n → glosses (duration in seconds)
-      final glosses = await _repository.fetchGlosses(event.text);
-      if (glosses.isEmpty) {
-        emit(const IslError('No ISL glosses found for the given text.'));
+    // Initialize STT if not available
+    if (!_speech.isAvailable) {
+      final available = await _speech.initialize(
+        onStatus: (s) => developer.log('IslBloc: STT status: $s'),
+        onError: (e) => developer.log('IslBloc: STT error: ${e.errorMsg}'),
+      );
+      if (!available) {
+        emit(const IslError(
+            'Microphone permission denied. Please allow mic access in settings.'));
         return;
       }
-      // Step 2: glosses → FastAPI → enriched signs (duration in ms)
-      emit(IslEnriching(glosses));
-      final signs = await _repository.enrichGlosses(glosses);
-      if (signs.isEmpty) {
-        emit(const IslError('Failed to enrich glosses from Supabase.'));
-        return;
-      }
-      // Ready to play — UI will call window.playSequence(json) on WebView
-      emit(IslPlayingSequence(signs: signs, currentIndex: 0));
-    } catch (e) {
-      emit(IslError(e.toString()));
     }
+
+    _speech.listen(
+      onResult: (result) {
+        _capturedText = result.recognizedWords;
+        developer.log('IslBloc: Capturing: "$_capturedText"');
+
+        // Push live text to UI
+        if (!isClosed) add(IslLiveTextUpdated(_capturedText));
+
+        // Rolling 1.5-second silence detection
+        _silenceTimer?.cancel();
+        _silenceTimer = Timer(const Duration(milliseconds: 1500), () {
+          _endListening();
+        });
+      },
+      listenFor: const Duration(seconds: 30),
+      listenOptions: stt.SpeechListenOptions(
+        cancelOnError: false,
+        listenMode: stt.ListenMode.dictation,
+        partialResults: true,
+      ),
+    );
+
+    // 10-second absolute failsafe
+    _failsafeTimer = Timer(const Duration(seconds: 10), () {
+      _endListening();
+    });
   }
 
-  void _onGlossesReceived(
-    IslGlossesReceived event,
+  // ── STT: User taps stop manually ─────────────────────────────────────────
+
+  void _onStopListening(IslStopListening event, Emitter<IslState> emit) {
+    _endListening();
+  }
+
+  // ── STT: Internal — called by timers ─────────────────────────────────────
+
+  void _endListening() {
+    _silenceTimer?.cancel();
+    _failsafeTimer?.cancel();
+
+    try {
+      _speech.stop();
+    } catch (_) {}
+
+    SystemSound.play(SystemSoundType.click);
+
+    final text = _capturedText.trim();
+    developer.log('IslBloc: Final captured: "$text"');
+    if (!isClosed) add(_IslSpeechFinished(text));
+  }
+
+  // ── STT: Live text update ─────────────────────────────────────────────────
+
+  void _onLiveTextUpdated(IslLiveTextUpdated event, Emitter<IslState> emit) {
+    emit(IslListening(liveText: event.text));
+  }
+
+  // ── STT → Enrich → Play ───────────────────────────────────────────────────
+
+  Future<void> _onSpeechFinished(
+    _IslSpeechFinished event,
     Emitter<IslState> emit,
   ) async {
-    emit(IslEnriching(event.glosses));
-    try {
-      final signs = await _repository.enrichGlosses(event.glosses);
-      emit(IslPlayingSequence(signs: signs, currentIndex: 0));
-    } catch (e) {
-      emit(IslError(e.toString()));
-    }
+    // Use what was captured, or default to a demo phrase
+    final spokenText =
+        event.text.isNotEmpty ? event.text : 'ISL Demo — LIFE MY DANGER';
+
+    emit(IslProcessingText(spokenText));
+
+    // Brief artificial delay to show "Processing..." state
+    await Future.delayed(const Duration(milliseconds: 600));
+
+    // ── Use dummy enriched signs for now ─────────────────────────────────
+    // TODO: Replace _getDummyEnrichedSigns() with real FastAPI /enrich call:
+    //   final glosses = await _repository.fetchGlosses(spokenText);
+    //   final signs = await _repository.enrichGlosses(glosses);
+    final signs = _getDummyEnrichedSigns(spokenText);
+
+    emit(IslPlayingSequence(
+      signs: signs,
+      currentIndex: 0,
+      spokenText: spokenText,
+    ));
   }
 
-  void _onSignStarted(
-    IslSignStarted event,
-    Emitter<IslState> emit,
-  ) {
+  // ── Avatar playback events from Three.js ──────────────────────────────────
+
+  void _onSignStarted(IslSignStarted event, Emitter<IslState> emit) {
     final current = state;
     if (current is IslPlayingSequence) {
       emit(IslPlayingSequence(
         signs: current.signs,
         currentIndex: event.signIndex,
+        spokenText: current.spokenText,
       ));
     }
   }
 
   void _onSequenceCompleted(
-    IslSequenceCompleted event,
-    Emitter<IslState> emit,
-  ) {
+      IslSequenceCompleted event, Emitter<IslState> emit) {
     final current = state;
     if (current is IslPlayingSequence) {
-      emit(IslSequenceDone(current.signs));
+      emit(IslSequenceDone(
+        signs: current.signs,
+        spokenText: current.spokenText,
+      ));
     }
   }
 
@@ -105,8 +197,65 @@ class IslBloc extends Bloc<IslEvent, IslState> {
     emit(IslError(event.message));
   }
 
+  // ── Dummy enriched signs ─────────────────────────────────────────────────
+  // These mirror the exact format returned by FastAPI /enrich:
+  // { gloss, duration_ms (ms!), keyframes, nmm }
+  //
+  // Duration is ALREADY in ms here — FastAPI converts seconds→ms.
+  // Three.js will receive these ms values directly from window.playSequence().
+
+  List<EnrichedSign> _getDummyEnrichedSigns(String spokenText) {
+    return [
+      EnrichedSign(
+        gloss: 'LIFE',
+        durationMs: 1500, // ms — matches n8n duration:1.5 * 1000
+        keyframes: [
+          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0]},
+          {'time': 0.7, 'RightHand': [0.5, 1.0, 0.0]},
+          {'time': 1.5, 'RightHand': [1.0, 1.2, 0.0]},
+        ],
+        nmm: {'face': 'serious', 'head': 'neutral'},
+      ),
+      EnrichedSign(
+        gloss: 'MY',
+        durationMs: 1000, // ms
+        keyframes: [
+          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0]},
+          {'time': 0.5, 'RightHand': [0.2, 0.8, 0.0]},
+          {'time': 1.0, 'RightHand': [0.3, 1.0, 0.0]},
+        ],
+        nmm: {'face': 'neutral', 'head': 'neutral'},
+      ),
+      EnrichedSign(
+        gloss: 'DANGER',
+        durationMs: 2000, // ms
+        keyframes: [
+          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0], 'LeftHand': [0.0, 0.0, 0.0]},
+          {'time': 1.0, 'RightHand': [0.8, 1.5, 0.3], 'LeftHand': [-0.4, 1.2, -0.2]},
+          {'time': 2.0, 'RightHand': [1.2, 0.5, 0.6], 'LeftHand': [-0.8, 0.4, -0.4]},
+        ],
+        nmm: {'face': 'alert', 'head': 'forward'},
+      ),
+      EnrichedSign(
+        gloss: 'HELP',
+        durationMs: 1800, // ms
+        keyframes: [
+          {'time': 0.0, 'RightHand': [0.0, 0.0, 0.0], 'LeftHand': [0.0, 0.0, 0.0]},
+          {'time': 0.9, 'RightHand': [0.3, 1.2, 0.0], 'LeftHand': [-0.1, 0.8, 0.0]},
+          {'time': 1.8, 'RightHand': [0.5, 0.9, 0.0], 'LeftHand': [-0.2, 0.6, 0.0]},
+        ],
+        nmm: {'face': 'serious', 'head': 'neutral'},
+      ),
+    ];
+  }
+
   @override
   Future<void> close() {
+    _silenceTimer?.cancel();
+    _failsafeTimer?.cancel();
+    try {
+      _speech.stop();
+    } catch (_) {}
     _repository.dispose();
     return super.close();
   }
