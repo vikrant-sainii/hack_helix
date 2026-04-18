@@ -201,36 +201,42 @@ class _IslScreenState extends State<IslScreen>
             child: Stack(
               children: [
                 // ── Three.js avatar WebView — remains in tree to avoid reloads
-                Positioned.fill(
+                Positioned(
+                  top: 100,
+                  bottom: 120,
+                  left: 20,
+                  right: 20,
                   child: Visibility(
                     visible: state is IslPlayingSequence || state is IslSequenceDone,
                     maintainState: true,
-                    child: Align(
-                      alignment: Alignment.center,
-                      child: Container(
-                        margin: const EdgeInsets.fromLTRB(20, 100, 20, 100),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0A0E1A),
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.4),
-                              blurRadius: 20,
-                              spreadRadius: 5,
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(30),
-                          child: WebViewWidget(controller: _webCtrl),
-                        ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0A0E1A),
+                        borderRadius: BorderRadius.circular(30),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.4),
+                            blurRadius: 20,
+                            spreadRadius: 5,
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(30),
+                        child: WebViewWidget(controller: _webCtrl),
                       ),
                     ),
                   ),
                 ),
 
-                // ── Main UI content ───────────────────────────────────
-                _buildMainContent(state),
+                // ── Main UI content — Forced to full width to ensure Stack fills screen ──
+                Positioned.fill(
+                  child: Column(
+                    children: [
+                      Expanded(child: _buildMainContent(state)),
+                    ],
+                  ),
+                ),
 
                 // ── Top status chip ───────────────────────────────────
                 Positioned(
