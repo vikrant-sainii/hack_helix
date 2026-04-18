@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ISL Translator - Full Expressions</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #2c3e50; font-family: sans-serif; }
+        #ui-container { 
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%); 
+            z-index: 100; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px;
+            display: flex; gap: 10px; align-items: center;
+        }
+        input[type="text"] { padding: 10px; font-size: 16px; width: 300px; border-radius: 5px; border: none; }
+        button { background: #27ae60; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 5px; font-weight: bold; }
+        button:hover { background: #2ecc71; }
+        #btn-stop { background: #e74c3c; }
+        #current-word {
+            position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+            color: #f1c40f; font-size: 40px; font-weight: bold; z-index: 100; text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="ui-container">
+        <input type="text" id="text-input" value="MY LIFE DANGER HELP">
+        <button id="btn-play">Translate & Loop</button>
+        <button id="btn-stop">Stop</button>
+    </div>
+    <div id="current-word">...</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 1. YOUR ENRICHED SIGN DATA ---
+        const signData = {
+            'LIFE': { 
+                duration: 1.5, 
+                frames: [
+                    { time: 0.0, RightHand: [0.0, 0.0, 0.0] },
+                    { time: 0.7, RightHand: [0.5, 1.0, 0.0] },
+                    { time: 1.5, RightHand: [1.0, 1.2, 0.0] }
+                ],
+                nmm: { face: 'happy', head: 'neutral' } // Changed to happy!
+            },
+            'MY': { 
+                duration: 1.0, 
+                frames: [
+                    { time: 0.0, RightHand: [0.0, 0.0, 0.0] },
+                    { time: 0.5, RightHand: [0.2, 0.8, 0.0] },
+                    { time: 1.0, RightHand: [0.3, 1.0, 0.0] }
+                ],
+                nmm: { face: 'neutral', head: 'neutral' }
+            },
+            'DANGER': { 
+                duration: 2.0, 
+                frames: [
+                    { time: 0.0, RightHand: [0.0, 0.0, 0.0], LeftHand: [0.0, 0.0, 0.0] },
+                    { time: 1.0, RightHand: [0.8, 1.5, 0.3], LeftHand: [-0.4, 1.2, -0.2] },
+                    { time: 2.0, RightHand: [1.2, 0.5, 0.6], LeftHand: [-0.8, 0.4, -0.4] }
+                ],
+                nmm: { face: 'alert', head: 'forward' } // Eyes wide, jaw open
+            },
+            'HELP': { 
+                duration: 1.8, 
+                frames: [
+                    { time: 0.0, RightHand: [0.0, 0.0, 0.0], LeftHand: [0.0, 0.0, 0.0] },
+                    { time: 0.9, RightHand: [0.3, 1.2, 0.0], LeftHand: [-0.1, 0.8, 0.0] },
+                    { time: 1.8, RightHand: [0.5, 0.9, 0.0], LeftHand: [-0.2, 0.6, 0.0] }
+                ],
+                nmm: { face: 'pleading', head: 'neutral' } // Brows up, slightly worried
+            }
+        };
+
+        // --- NEW: THE ULTIMATE FACIAL EXPRESSION DICTIONARY ---
+        // Mapped exactly to your console data! Numbers go from 0.0 to 1.0
+        const faceDictionary = {
+            'neutral': {},
+            'happy': { 'mouthSmile': 0.8, 'cheekSquintLeft': 0.5, 'cheekSquintRight': 0.5 },
+            'serious': { 'browDownLeft': 0.8, 'browDownRight': 0.8, 'mouthPressLeft': 0.5, 'mouthPressRight': 0.5 },
+            'alert': { 'eyeWideLeft': 0.9, 'eyeWideRight': 0.9, 'browInnerUp': 0.8, 'jawOpen': 0.2 },
+            'pleading': { 'browInnerUp': 1.0, 'mouthFrownLeft': 0.3, 'mouthFrownRight': 0.3, 'eyeSquintLeft': 0.2, 'eyeSquintRight': 0.2 },
+            'angry': { 'browDownLeft': 1.0, 'browDownRight': 1.0, 'mouthFrownLeft': 0.7, 'mouthFrownRight': 0.7, 'noseSneerLeft': 0.5, 'noseSneerRight': 0.5 }
+        };
+
+        const headDictionary = {
+            'neutral': [0, 0, 0],
+            'forward': [0.3, 0, 0] 
+        };
+
+        // --- 2. SET UP WORLD ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1.5, 1.2); // Moved camera even closer to the face!
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1.4, 0); // Aimed right at his face
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
+
+        // --- 3. LOAD AVATAR ---
+        const loader = new GLTFLoader();
+        let avatar = null;
+        let rightArmBone, leftArmBone, headBone;
+
+        loader.load('avatar.glb', (gltf) => {
+            avatar = gltf.scene;
+            scene.add(avatar);
+            
+            rightArmBone = avatar.getObjectByName("RightArm") || avatar.getObjectByName("mixamorigRightArm");
+            leftArmBone = avatar.getObjectByName("LeftArm") || avatar.getObjectByName("mixamorigLeftArm");
+            headBone = avatar.getObjectByName("Head") || avatar.getObjectByName("mixamorigHead");
+            
+            console.log("✅ Avatar Ready! Ready to Sign.");
+        });
+
+        // --- 4. APPLY NMM FUNCTION (Head & Face) ---
+        function applyNMM(nmmData) {
+            if (!nmmData || !avatar) return;
+
+            // Move Head
+            if (headBone && nmmData.head) {
+                let rot = headDictionary[nmmData.head] || headDictionary['neutral'];
+                headBone.rotation.set(rot[0], rot[1], rot[2]);
+            }
+
+            // Move Face Muscles
+            let faceSettings = faceDictionary[nmmData.face] || faceDictionary['neutral'];
+
+            avatar.traverse((node) => {
+                if (node.isMesh && node.morphTargetDictionary) {
+                    // Reset all muscles to 0 first (so expressions don't stack weirdly)
+                    for (let key in node.morphTargetDictionary) {
+                        node.morphTargetInfluences[node.morphTargetDictionary[key]] = 0;
+                    }
+                    // Apply our specific dictionary muscles
+                    for (let muscle in faceSettings) {
+                        if (node.morphTargetDictionary[muscle] !== undefined) {
+                            // Apply the intensity we set (like 0.8)
+                            node.morphTargetInfluences[node.morphTargetDictionary[muscle]] = faceSettings[muscle];
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- 5. THE ANIMATION ENGINE ---
+        const clock = new THREE.Clock();
+        let activeSign = null;
+        let signStartTime = 0;
+        let sequenceQueue = [];
+        let sequenceIndex = 0;
+        let isPlayingSequence = false;
+
+        function lerp(start, end, progress) { return start + (end - start) * progress; }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            if (isPlayingSequence && activeSign && avatar) {
+                let elapsedTime = clock.getElapsedTime() - signStartTime;
+
+                if (elapsedTime >= activeSign.duration) {
+                    sequenceIndex++;
+                    if (sequenceIndex >= sequenceQueue.length) { sequenceIndex = 0; }
+                    
+                    let nextWord = sequenceQueue[sequenceIndex];
+                    activeSign = signData[nextWord];
+                    signStartTime = clock.getElapsedTime();
+                    document.getElementById('current-word').innerText = nextWord;
+
+                    // BOOM! Change the face instantly when the word changes
+                    applyNMM(activeSign.nmm);
+                } 
+                else {
+                    let frames = activeSign.frames;
+                    let frameA = frames[0];
+                    let frameB = frames[frames.length - 1]; 
+
+                    for (let i = 0; i < frames.length - 1; i++) {
+                        if (elapsedTime >= frames[i].time && elapsedTime <= frames[i+1].time) {
+                            frameA = frames[i]; frameB = frames[i+1]; break;
+                        }
+                    }
+                    let timeSegment = frameB.time - frameA.time;
+                    let progress = (elapsedTime - frameA.time) / timeSegment;
+
+                    if (frameA.RightHand && rightArmBone) {
+                        rightArmBone.rotation.set(
+                            lerp(frameA.RightHand[0], frameB.RightHand[0], progress),
+                            lerp(frameA.RightHand[1], frameB.RightHand[1], progress),
+                            lerp(frameA.RightHand[2], frameB.RightHand[2], progress)
+                        );
+                    }
+                    if (frameA.LeftHand && leftArmBone) {
+                        leftArmBone.rotation.set(
+                            lerp(frameA.LeftHand[0], frameB.LeftHand[0], progress),
+                            lerp(frameA.LeftHand[1], frameB.LeftHand[1], progress),
+                            lerp(frameA.LeftHand[2], frameB.LeftHand[2], progress)
+                        );
+                    } else if (leftArmBone) {
+                        leftArmBone.rotation.set(0, 0, 0); 
+                    }
+                }
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- 6. CONTROLS ---
+        document.getElementById('btn-play').addEventListener('click', () => {
+            let text = document.getElementById('text-input').value;
+            sequenceQueue = text.toUpperCase().trim().split(/\s+/).filter(word => signData[word]);
+
+            if (sequenceQueue.length > 0) {
+                sequenceIndex = 0;
+                isPlayingSequence = true;
+                activeSign = signData[sequenceQueue[0]];
+                signStartTime = clock.getElapsedTime();
+                document.getElementById('current-word').innerText = sequenceQueue[0];
+                
+                // Apply first NMM immediately!
+                applyNMM(activeSign.nmm);
+            }
+        });
+
+        document.getElementById('btn-stop').addEventListener('click', () => {
+            isPlayingSequence = false;
+            activeSign = null;
+            document.getElementById('current-word').innerText = "STOPPED";
+            applyNMM({ face: 'neutral', head: 'neutral' });
+            if (rightArmBone) rightArmBone.rotation.set(0,0,0);
+            if (leftArmBone) leftArmBone.rotation.set(0,0,0);
+        });
+    </script>
+</body>
+</html>

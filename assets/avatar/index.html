@@ -1,530 +1,352 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>ISL Avatar</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0a0e1a; overflow: hidden; touch-action: none; }
-    #c { display: block; width: 100vw; height: 100vh; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISL Translator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background-color: #0a0e1a; font-family: sans-serif; }
+        canvas { display: block; }
 
-    /* ── Subtitle / Gloss Bar ── */
-    #gloss-bar {
-      position: fixed;
-      bottom: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      justify-content: center;
-      padding: 8px 16px;
-      background: rgba(0, 0, 0, 0.55);
-      border-radius: 28px;
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      min-height: 40px;
-      transition: opacity 0.4s ease;
-    }
-    .chip {
-      padding: 5px 14px;
-      border-radius: 14px;
-      font-size: 13px;
-      font-weight: 700;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      letter-spacing: 1px;
-      color: rgba(255, 255, 255, 0.35);
-      border: 1.5px solid rgba(255, 255, 255, 0.08);
-      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      transform: scale(1);
-    }
-    .chip.active {
-      color: #fff;
-      background: rgba(108, 99, 255, 0.85);
-      border-color: #6c63ff;
-      box-shadow: 0 0 16px rgba(108, 99, 255, 0.7);
-      transform: scale(1.12);
-    }
-    .chip.done {
-      color: rgba(255, 255, 255, 0.5);
-      border-color: rgba(255, 255, 255, 0.15);
-    }
+        #load-overlay {
+            position: fixed; inset: 0;
+            background: #0a0e1a;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 200;
+            transition: opacity 0.6s ease;
+        }
+        #load-overlay.hidden { opacity: 0; pointer-events: none; }
 
-    /* ── Loading overlay ── */
-    #loading {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-      background: #0a0e1a;
-      z-index: 10;
-      transition: opacity 0.6s ease;
-    }
-    #loading.hidden { opacity: 0; pointer-events: none; }
-    .spinner {
-      width: 38px; height: 38px;
-      border: 3px solid rgba(108, 99, 255, 0.25);
-      border-top-color: #6c63ff;
-      border-radius: 50%;
-      animation: spin 0.75s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    #loading span {
-      font-family: -apple-system, sans-serif;
-      font-size: 13px;
-      color: rgba(255,255,255,0.4);
-      letter-spacing: 1px;
-    }
-  </style>
+        #load-logo {
+            font-size: 48px; font-weight: 800; letter-spacing: 2px;
+            background: linear-gradient(135deg, #6c63ff, #00e5ff);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            margin-bottom: 32px;
+        }
+        #load-track {
+            width: 220px; height: 4px;
+            background: rgba(255,255,255,0.12);
+            border-radius: 999px; overflow: hidden;
+        }
+        #load-bar {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, #6c63ff, #00e5ff);
+            border-radius: 999px;
+            transition: width 0.2s ease;
+        }
+        #load-tip {
+            margin-top: 18px;
+            color: rgba(255,255,255,0.4);
+            font-size: 13px;
+            letter-spacing: 0.5px;
+        }
+
+        /* Current word label */
+        #current-word {
+            position: fixed;
+            bottom: 28px; left: 50%;
+            transform: translateX(-50%);
+            color: #f1c40f;
+            font-size: 34px;
+            font-weight: 800;
+            z-index: 100;
+            text-shadow: 0 2px 12px rgba(0,0,0,0.7);
+            letter-spacing: 2px;
+            display: none;
+        }
+        #current-word.visible { display: block; }
+    </style>
 </head>
 <body>
 
-<canvas id="c"></canvas>
-<div id="gloss-bar"></div>
-<div id="loading"><div class="spinner"></div><span>LOADING AVATAR</span></div>
+<!-- Loading overlay -->
+<div id="load-overlay">
+    <div id="load-logo">ISL</div>
+    <div id="load-track"><div id="load-bar"></div></div>
+    <div id="load-tip">Loading avatar…</div>
+</div>
 
-<!-- Three.js r158 + TWEEN.js via jsDelivr -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tweenjs/tween.js@18.6.4/dist/tween.umd.js"></script>
+<!-- Current sign word -->
+<div id="current-word"></div>
+
+<!-- THREE.JS — injected inline by Flutter (_loadInlinedHtml) -->
+<script>/* THREE_PLACEHOLDER */</script>
+<!-- GLTF LOADER -->
+<script>/* GLTF_PLACEHOLDER */</script>
 
 <script>
-// ═══════════════════════════════════════════════════════════════════════════
-// CONFIG
-// ═══════════════════════════════════════════════════════════════════════════
-const AVATAR_SCALE   = 1.0;
-const CAMERA_Z       = 3.2;
-const BG_COLOR       = 0x0a0e1a;
-const BODY_COLOR     = 0x1de9b6;   // teal
-const BODY_EMISSIVE  = 0x006655;
-const JOINT_COLOR    = 0x00bcd4;
-const JOINT_EMISSIVE = 0x00455a;
-const HEAD_COLOR     = 0xffe0b2;   // skin-ish
-const HEAD_EMISSIVE  = 0x5d4037;
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENE SETUP  (mirrors source/index.html exactly)
+// ─────────────────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e1a);
 
-// ═══════════════════════════════════════════════════════════════════════════
-// RENDERER + SCENE + CAMERA
-// ═══════════════════════════════════════════════════════════════════════════
-const canvas   = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const camera = new THREE.PerspectiveCamera(
+    75, window.innerWidth / window.innerHeight, 0.1, 1000
+);
+camera.position.set(0, 1.5, 1.2);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
 
-const scene  = new THREE.Scene();
-scene.background = new THREE.Color(BG_COLOR);
-scene.fog = new THREE.FogExp2(BG_COLOR, 0.08);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+dirLight.position.set(2, 4, 3);
+scene.add(dirLight);
 
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0.5, CAMERA_Z);
-camera.lookAt(0, 0.5, 0);
-
-// ── Resize handler ─────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// LIGHTING
-// ═══════════════════════════════════════════════════════════════════════════
-scene.add(new THREE.AmbientLight(0x223355, 2.0));
-
-const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
-keyLight.position.set(2, 4, 3);
-keyLight.castShadow = true;
-scene.add(keyLight);
-
-const fillLight = new THREE.DirectionalLight(0x00e5ff, 0.6);
-fillLight.position.set(-3, 1, 1);
-scene.add(fillLight);
-
-const rimLight = new THREE.PointLight(0x6c63ff, 2.0, 5);
-rimLight.position.set(0, 3, -1);
-scene.add(rimLight);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// GRID (floor)
-// ═══════════════════════════════════════════════════════════════════════════
-const grid = new THREE.GridHelper(10, 20, 0x1a2540, 0x0f1829);
-grid.position.y = -1.6;
-scene.add(grid);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MATERIALS
-// ═══════════════════════════════════════════════════════════════════════════
-function makeMat(color, emissive, shininess = 80) {
-  return new THREE.MeshPhongMaterial({ color, emissive, shininess });
-}
-const matBody   = makeMat(BODY_COLOR,  BODY_EMISSIVE,  100);
-const matJoint  = makeMat(JOINT_COLOR, JOINT_EMISSIVE, 150);
-const matHead   = makeMat(HEAD_COLOR,  HEAD_EMISSIVE,   60);
-const matOutline = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-function mesh(geo, mat, parent, px=0, py=0, pz=0, sx=1, sy=1, sz=1) {
-  const m = new THREE.Mesh(geo, mat);
-  m.castShadow = true;
-  m.position.set(px, py, pz);
-  m.scale.set(sx, sy, sz);
-  parent.add(m);
-  return m;
-}
-function outline(geo, parent, px=0, py=0, pz=0, s=1.06) {
-  const m = new THREE.Mesh(geo, matOutline);
-  m.position.set(px, py, pz);
-  m.scale.setScalar(s);
-  parent.add(m);
-}
-function pivot(parent, px=0, py=0, pz=0) {
-  const g = new THREE.Group();
-  g.position.set(px, py, pz);
-  parent.add(g);
-  return g;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AVATAR CONSTRUCTION
-// ═══════════════════════════════════════════════════════════════════════════
-const root = new THREE.Group();
-root.scale.setScalar(AVATAR_SCALE);
-root.position.set(0, -0.8, 0);
-scene.add(root);
-
-// ── GEO CACHE ──────────────────────────────────────────────────────────────
-const geoTorso    = new THREE.BoxGeometry(0.52, 0.70, 0.24);
-const geoChest    = new THREE.BoxGeometry(0.44, 0.18, 0.22);
-const geoShoulder = new THREE.SphereGeometry(0.09, 8, 6);
-const geoUpperArm = new THREE.CylinderGeometry(0.07, 0.065, 0.35, 8);
-const geoElbow    = new THREE.SphereGeometry(0.07, 8, 6);
-const geoForeArm  = new THREE.CylinderGeometry(0.062, 0.055, 0.30, 8);
-const geoWrist    = new THREE.SphereGeometry(0.058, 8, 6);
-const geoHand     = new THREE.BoxGeometry(0.13, 0.10, 0.07);
-const geoHead     = new THREE.SphereGeometry(0.21, 14, 10);
-const geoNeck     = new THREE.CylinderGeometry(0.07, 0.08, 0.12, 8);
-const geoPelvis   = new THREE.BoxGeometry(0.42, 0.14, 0.20);
-const geoThigh    = new THREE.CylinderGeometry(0.09, 0.08, 0.40, 8);
-const geoKneeCap  = new THREE.SphereGeometry(0.085, 8, 6);
-const geoShin     = new THREE.CylinderGeometry(0.075, 0.065, 0.36, 8);
-const geoFoot     = new THREE.BoxGeometry(0.12, 0.07, 0.22);
-
-// ── TORSO ──────────────────────────────────────────────────────────────────
-const torsoGroup = pivot(root, 0, 0.7, 0);
-mesh(geoTorso, matBody, torsoGroup, 0, 0.35, 0);
-mesh(geoChest, matJoint, torsoGroup, 0, 0.58, 0.03); // chest detail
-outline(geoTorso, torsoGroup, 0, 0.35, 0, 1.04);
-
-// ── HEAD ───────────────────────────────────────────────────────────────────
-const neckGroup = pivot(torsoGroup, 0, 0.72, 0);
-mesh(geoNeck, matJoint, neckGroup, 0, 0.06, 0);
-
-const headGroup = pivot(neckGroup, 0, 0.18, 0);
-mesh(geoHead, matHead, headGroup, 0, 0.21, 0);
-outline(geoHead, headGroup, 0, 0.21, 0, 1.04);
-
-// Eye dots
-const geoEye = new THREE.SphereGeometry(0.03, 6, 4);
-const matEye = new THREE.MeshBasicMaterial({ color: 0x0a0e1a });
-const eyeL   = new THREE.Mesh(geoEye, matEye);
-const eyeR   = new THREE.Mesh(geoEye, matEye);
-eyeL.position.set(-0.08, 0.24, 0.19);
-eyeR.position.set( 0.08, 0.24, 0.19);
-headGroup.add(eyeL, eyeR);
-
-// ── RIGHT ARM ──────────────────────────────────────────────────────────────
-const rShoulder = pivot(torsoGroup, 0.33, 0.65, 0);
-mesh(geoShoulder, matJoint, rShoulder, 0, 0, 0);
-mesh(geoUpperArm, matBody, rShoulder, 0, -0.18, 0);
-
-const rElbow = pivot(rShoulder, 0, -0.36, 0);
-mesh(geoElbow, matJoint, rElbow, 0, 0, 0);
-mesh(geoForeArm, matBody, rElbow, 0, -0.16, 0);
-
-const rWrist = pivot(rElbow, 0, -0.32, 0);
-mesh(geoWrist, matJoint, rWrist, 0, 0, 0);
-mesh(geoHand, matJoint, rWrist, 0, -0.07, 0);
-
-// ── LEFT ARM ───────────────────────────────────────────────────────────────
-const lShoulder = pivot(torsoGroup, -0.33, 0.65, 0);
-mesh(geoShoulder, matJoint, lShoulder, 0, 0, 0);
-mesh(geoUpperArm, matBody, lShoulder, 0, -0.18, 0);
-
-const lElbow = pivot(lShoulder, 0, -0.36, 0);
-mesh(geoElbow, matJoint, lElbow, 0, 0, 0);
-mesh(geoForeArm, matBody, lElbow, 0, -0.16, 0);
-
-const lWrist = pivot(lElbow, 0, -0.32, 0);
-mesh(geoWrist, matJoint, lWrist, 0, 0, 0);
-mesh(geoHand, matJoint, lWrist, 0, -0.07, 0);
-
-// ── PELVIS & LEGS ──────────────────────────────────────────────────────────
-const pelvisGroup = pivot(torsoGroup, 0, -0.02, 0);
-mesh(geoPelvis, matBody, pelvisGroup, 0, 0, 0);
-
-function buildLeg(parent, side) {
-  const x = side * 0.13;
-  const hip = pivot(parent, x, -0.08, 0);
-  mesh(geoThigh, matBody, hip, 0, -0.20, 0);
-  const knee = pivot(hip, 0, -0.41, 0);
-  mesh(geoKneeCap, matJoint, knee, 0, 0, 0);
-  mesh(geoShin, matBody, knee, 0, -0.19, 0);
-  const ankle = pivot(knee, 0, -0.38, 0);
-  mesh(geoFoot, matJoint, ankle, 0, -0.035, 0.05);
-  return hip;
-}
-const rHip = buildLeg(pelvisGroup,  1);
-const lHip = buildLeg(pelvisGroup, -1);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PIVOT MAP — maps keyframe bone keys → Three.js pivot groups
-// "RightHand" drives the right shoulder (whole arm motion)
-// "LeftHand"  drives the left shoulder
-// "RightArm"  drives the right elbow (forearm curl)
-// "LeftArm"   drives the left elbow
-// ═══════════════════════════════════════════════════════════════════════════
-const pivotMap = {
-  RightHand:    rShoulder,
-  LeftHand:     lShoulder,
-  RightArm:     rElbow,
-  LeftArm:      lElbow,
-  RightForeArm: rWrist,
-  LeftForeArm:  lWrist,
+// ─────────────────────────────────────────────────────────────────────────────
+// FACIAL-EXPRESSION DICTIONARY  (from source/index.html)
+// ─────────────────────────────────────────────────────────────────────────────
+const faceDictionary = {
+    'neutral'  : {},
+    'happy'    : { mouthSmile: 0.8, cheekSquintLeft: 0.5, cheekSquintRight: 0.5 },
+    'serious'  : { browDownLeft: 0.8, browDownRight: 0.8, mouthPressLeft: 0.5, mouthPressRight: 0.5 },
+    'alert'    : { eyeWideLeft: 0.9, eyeWideRight: 0.9, browInnerUp: 0.8, jawOpen: 0.2 },
+    'pleading' : { browInnerUp: 1.0, mouthFrownLeft: 0.3, mouthFrownRight: 0.3, eyeSquintLeft: 0.2, eyeSquintRight: 0.2 },
+    'angry'    : { browDownLeft: 1.0, browDownRight: 1.0, mouthFrownLeft: 0.7, mouthFrownRight: 0.7, noseSneerLeft: 0.5, noseSneerRight: 0.5 }
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// IDLE REST POSE
-// ═══════════════════════════════════════════════════════════════════════════
-const IDLE_POSE = {
-  RightHand: [0.0,  0.0, -0.15],
-  LeftHand:  [0.0,  0.0,  0.15],
-  RightArm:  [0.0,  0.0,  0.0],
-  LeftArm:   [0.0,  0.0,  0.0],
+const headDictionary = {
+    'neutral' : [0, 0, 0],
+    'forward' : [0.3, 0, 0]
 };
 
-function applyPose(pose, ms = 400) {
-  for (const [key, rot] of Object.entries(pose)) {
-    const p = pivotMap[key];
-    if (!p) continue;
-    new TWEEN.Tween({ x: p.rotation.x, y: p.rotation.y, z: p.rotation.z })
-      .to({ x: rot[0], y: rot[1], z: rot[2] }, ms)
-      .easing(TWEEN.Easing.Sinusoidal.Out)
-      .onUpdate(o => p.rotation.set(o.x, o.y, o.z))
-      .start();
-  }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// AVATAR STATE
+// ─────────────────────────────────────────────────────────────────────────────
+let avatar       = null;
+let rightArmBone = null;
+let leftArmBone  = null;
+let headBone     = null;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// NMM (Non-Manual Markers) — head/face expressions
-// ═══════════════════════════════════════════════════════════════════════════
-const NMM_PRESETS = {
-  serious: () => { headGroup.rotation.x = 0.08; headGroup.rotation.y = 0;  },
-  alert:   () => { headGroup.rotation.x = -0.10; headGroup.rotation.y = 0.05; },
-  happy:   () => { headGroup.rotation.x = -0.05; headGroup.rotation.y = 0;  },
-  neutral: () => { headGroup.rotation.x = 0;    headGroup.rotation.y = 0;  },
-  forward: () => { headGroup.rotation.x = 0.12;  headGroup.rotation.y = 0;  },
-  nod:     () => { headGroup.rotation.x = 0.1;   headGroup.rotation.y = 0;  },
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// NMM  (Non-Manual Markers — face + head)
+// ─────────────────────────────────────────────────────────────────────────────
+function applyNMM(nmmData) {
+    if (!nmmData || !avatar) return;
 
-function applyNMM(nmm) {
-  const face = (nmm && nmm.face) ? nmm.face : 'neutral';
-  const fn = NMM_PRESETS[face] || NMM_PRESETS.neutral;
-  fn();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SUBTITLE / GLOSS BAR
-// ═══════════════════════════════════════════════════════════════════════════
-const glossBar = document.getElementById('gloss-bar');
-
-function updateGlossBar(signs, activeIdx) {
-  glossBar.innerHTML = signs.map((s, i) => {
-    let cls = 'chip';
-    if (i === activeIdx) cls += ' active';
-    else if (i < activeIdx) cls += ' done';
-    return `<span class="${cls}">${s.gloss}</span>`;
-  }).join('');
-}
-
-function clearGlossBar() { glossBar.innerHTML = ''; }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SLEEP HELPER
-// ═══════════════════════════════════════════════════════════════════════════
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SIGN PLAYER
-// ═══════════════════════════════════════════════════════════════════════════
-let _isPlaying = false;
-
-async function playSign(sign) {
-  const { keyframes, duration_ms, nmm } = sign;
-
-  // Apply NMM expression
-  applyNMM(nmm);
-
-  // Sort keyframes by time
-  const kfs = [...keyframes].sort((a, b) => a.time - b.time);
-
-  // Animate through consecutive keyframe pairs
-  for (let i = 0; i < kfs.length - 1; i++) {
-    const kf1 = kfs[i];
-    const kf2 = kfs[i + 1];
-    const segMs = (kf2.time - kf1.time) * 1000;
-
-    // For each joint in kf2, tween from kf1 value (or current)
-    for (const [key, pivot] of Object.entries(pivotMap)) {
-      const to = kf2[key];
-      if (!to) continue;
-      const from = kf1[key] || [pivot.rotation.x, pivot.rotation.y, pivot.rotation.z];
-      new TWEEN.Tween({ x: from[0], y: from[1], z: from[2] })
-        .to({ x: to[0], y: to[1], z: to[2] }, segMs)
-        .easing(TWEEN.Easing.Sinusoidal.InOut)
-        .onUpdate(o => pivot.rotation.set(o.x, o.y, o.z))
-        .start();
+    if (headBone && nmmData.head) {
+        const rot = headDictionary[nmmData.head] || headDictionary['neutral'];
+        headBone.rotation.set(rot[0], rot[1], rot[2]);
     }
 
-    await sleep(segMs);
-  }
-
-  // Hold final pose briefly
-  await sleep(Math.max(0, duration_ms - (kfs[kfs.length - 1].time * 1000)));
+    const faceSettings = faceDictionary[nmmData.face] || faceDictionary['neutral'];
+    avatar.traverse((node) => {
+        if (node.isMesh && node.morphTargetDictionary) {
+            for (const key in node.morphTargetDictionary) {
+                node.morphTargetInfluences[node.morphTargetDictionary[key]] = 0;
+            }
+            for (const muscle in faceSettings) {
+                if (node.morphTargetDictionary[muscle] !== undefined) {
+                    node.morphTargetInfluences[node.morphTargetDictionary[muscle]] = faceSettings[muscle];
+                }
+            }
+        }
+    });
 }
 
-// ── Main entry point called from Flutter ───────────────────────────────────
-window.playSequence = async function(signs) {
-  if (_isPlaying) return;
-  _isPlaying = true;
+// ─────────────────────────────────────────────────────────────────────────────
+// ANIMATION ENGINE  (Frame-based lerp — same style as source/index.html)
+// ─────────────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
 
-  console.log('[ISL] playSequence — ' + signs.length + ' signs');
-  updateGlossBar(signs, -1);
-  applyPose(IDLE_POSE, 200);
+let activeSign       = null;  // current sign object (from Flutter JSON)
+let signStartTime    = 0;
+let sequenceQueue    = [];    // array of sign objects
+let sequenceIndex    = 0;
+let isPlayingSequence = false;
+let loopSequence     = false; // Flutter controls looping
 
-  for (let i = 0; i < signs.length; i++) {
-    const sign = signs[i];
-    console.log('[ISL] signing: ' + sign.gloss + ' (' + sign.duration_ms + 'ms)');
+function lerp(start, end, t) { return start + (end - start) * t; }
 
-    // Notify Flutter → IslBloc.add(IslSignStarted(i))
-    _postToFlutter({ type: 'signStarted', index: i });
+function animate() {
+    requestAnimationFrame(animate);
 
-    updateGlossBar(signs, i);
-    await playSign(sign);
+    if (isPlayingSequence && activeSign && avatar) {
+        const elapsed = clock.getElapsedTime() - signStartTime;
+        const duration = activeSign.duration_ms / 1000;   // convert ms → s
 
-    // Brief inter-sign transition back toward idle
-    applyPose(IDLE_POSE, 250);
-    await sleep(220);
-  }
+        if (elapsed >= duration) {
+            sequenceIndex++;
+            if (sequenceIndex >= sequenceQueue.length) {
+                if (loopSequence) {
+                    sequenceIndex = 0;
+                } else {
+                    isPlayingSequence = false;
+                    activeSign = null;
+                    document.getElementById('current-word').classList.remove('visible');
+                    // Notify Flutter
+                    if (window.FlutterBridge) {
+                        FlutterBridge.postMessage(JSON.stringify({ type: 'sequenceCompleted' }));
+                    }
+                    return;
+                }
+            }
+            const nextSign = sequenceQueue[sequenceIndex];
+            activeSign = nextSign;
+            signStartTime = clock.getElapsedTime();
 
-  // Return to full idle
-  applyPose(IDLE_POSE, 500);
-  applyNMM({ face: 'neutral' });
-  clearGlossBar();
+            const wordEl = document.getElementById('current-word');
+            wordEl.textContent = nextSign.gloss;
+            wordEl.classList.add('visible');
 
-  _isPlaying = false;
-  _postToFlutter({ type: 'sequenceCompleted' });
-  console.log('[ISL] sequence complete');
+            applyNMM(nextSign.nmm);
+
+            // Notify Flutter which sign index started
+            if (window.FlutterBridge) {
+                FlutterBridge.postMessage(JSON.stringify({ type: 'signStarted', index: sequenceIndex }));
+            }
+        } else {
+            // Lerp between keyframes
+            const frames = activeSign.keyframes;
+            let frameA = frames[0];
+            let frameB = frames[frames.length - 1];
+
+            for (let i = 0; i < frames.length - 1; i++) {
+                // keyframes use 'time' in seconds (Flutter sends as-is)
+                if (elapsed >= frames[i].time && elapsed <= frames[i + 1].time) {
+                    frameA = frames[i];
+                    frameB = frames[i + 1];
+                    break;
+                }
+            }
+
+            const segDur = frameB.time - frameA.time;
+            const progress = segDur > 0 ? (elapsed - frameA.time) / segDur : 1;
+
+            if (frameA.RightHand && frameB.RightHand && rightArmBone) {
+                rightArmBone.rotation.set(
+                    lerp(frameA.RightHand[0], frameB.RightHand[0], progress),
+                    lerp(frameA.RightHand[1], frameB.RightHand[1], progress),
+                    lerp(frameA.RightHand[2], frameB.RightHand[2], progress)
+                );
+            }
+            if (frameA.LeftHand && frameB.LeftHand && leftArmBone) {
+                leftArmBone.rotation.set(
+                    lerp(frameA.LeftHand[0], frameB.LeftHand[0], progress),
+                    lerp(frameA.LeftHand[1], frameB.LeftHand[1], progress),
+                    lerp(frameA.LeftHand[2], frameB.LeftHand[2], progress)
+                );
+            } else if (leftArmBone) {
+                leftArmBone.rotation.set(0, 0, 0);
+            }
+        }
+    }
+
+    renderer.render(scene, camera);
+}
+animate();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLUTTER → JS API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Called by Flutter with a JSON array of EnrichedSign objects:
+ * [{ gloss, duration_ms, keyframes: [{time, RightHand?, LeftHand?}], nmm: {face, head} }]
+ */
+window.playSequence = function(signsJson) {
+    const signs = (typeof signsJson === 'string') ? JSON.parse(signsJson) : signsJson;
+    if (!signs || signs.length === 0) return;
+
+    sequenceQueue    = signs;
+    sequenceIndex    = 0;
+    isPlayingSequence = true;
+    loopSequence     = false;         // no auto-loop from Flutter
+    activeSign       = signs[0];
+    signStartTime    = clock.getElapsedTime();
+
+    const wordEl = document.getElementById('current-word');
+    wordEl.textContent = signs[0].gloss;
+    wordEl.classList.add('visible');
+
+    applyNMM(signs[0].nmm);
+
+    if (window.FlutterBridge) {
+        FlutterBridge.postMessage(JSON.stringify({ type: 'signStarted', index: 0 }));
+    }
 };
 
-// ── Reset avatar back to idle pose ─────────────────────────────────────────
+/** Reset avatar to neutral pose */
 window.resetAvatar = function() {
-  _isPlaying = false;
-  applyPose(IDLE_POSE, 400);
-  applyNMM({ face: 'neutral' });
-  clearGlossBar();
+    isPlayingSequence = false;
+    activeSign = null;
+    sequenceQueue = [];
+    document.getElementById('current-word').classList.remove('visible');
+    applyNMM({ face: 'neutral', head: 'neutral' });
+    if (rightArmBone) rightArmBone.rotation.set(0, 0, 0);
+    if (leftArmBone)  leftArmBone.rotation.set(0, 0, 0);
+    if (headBone)     headBone.rotation.set(0, 0, 0);
 };
 
-// ── Flutter bridge ──────────────────────────────────────────────────────────
-function _postToFlutter(obj) {
-  try {
-    if (typeof FlutterBridge !== 'undefined') {
-      FlutterBridge.postMessage(JSON.stringify(obj));
-    }
-  } catch (e) {
-    console.warn('[ISL] FlutterBridge not available:', e);
-  }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// GLB LOADING  — Flutter pushes base64 chunks → assembleAndLoadGLB()
+// ─────────────────────────────────────────────────────────────────────────────
+window._glbChunks = [];
 
-// ═══════════════════════════════════════════════════════════════════════════
-// IDLE ANIMATION
-// ═══════════════════════════════════════════════════════════════════════════
-let _idleTime = 0;
+window.assembleAndLoadGLB = function() {
+    const lb = document.getElementById('load-bar');
+    if (lb) lb.style.width = '95%';
 
-function idleStep(t) {
-  if (_isPlaying) return;
-  _idleTime = t * 0.001;
+    const b64 = window._glbChunks.join('');
+    window._glbChunks = []; // free memory
 
-  // Breathing — subtle torso scale
-  torsoGroup.scale.y = 1.0 + 0.008 * Math.sin(_idleTime * 1.2);
+    // base64 → ArrayBuffer
+    const binStr = atob(b64);
+    const len    = binStr.length;
+    const bytes  = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i);
 
-  // Arms gentle rest sway
-  rShoulder.rotation.z = IDLE_POSE.RightHand[2] + 0.02 * Math.sin(_idleTime * 0.8);
-  lShoulder.rotation.z = IDLE_POSE.LeftHand[2]  - 0.02 * Math.sin(_idleTime * 0.8);
+    const loader = new THREE.GLTFLoader();
+    loader.parse(bytes.buffer, '', (gltf) => {
+        avatar = gltf.scene;
+        scene.add(avatar);
 
-  // Head subtle nod
-  headGroup.rotation.y = 0.015 * Math.sin(_idleTime * 0.5);
-}
+        // Bone discovery — try both ReadyPlayerMe and Mixamo naming
+        rightArmBone = avatar.getObjectByName('RightArm')
+                    || avatar.getObjectByName('mixamorigRightArm');
+        leftArmBone  = avatar.getObjectByName('LeftArm')
+                    || avatar.getObjectByName('mixamorigLeftArm');
+        headBone     = avatar.getObjectByName('Head')
+                    || avatar.getObjectByName('mixamorigHead');
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FLOATING PARTICLES (ambient atmosphere)
-// ═══════════════════════════════════════════════════════════════════════════
-(function buildParticles() {
-  const count   = 120;
-  const geo     = new THREE.BufferGeometry();
-  const pos     = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    pos[i * 3]     = (Math.random() - 0.5) * 8;
-    pos[i * 3 + 1] = Math.random() * 6 - 1;
-    pos[i * 3 + 2] = (Math.random() - 0.5) * 6;
-  }
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const mat = new THREE.PointsMaterial({ color: 0x6c63ff, size: 0.025, transparent: true, opacity: 0.5 });
-  const pts = new THREE.Points(geo, mat);
-  scene.add(pts);
+        // Centre the avatar
+        const box = new THREE.Box3().setFromObject(avatar);
+        const center = box.getCenter(new THREE.Vector3());
+        avatar.position.sub(center);
+        avatar.position.y += (box.max.y - box.min.y) / 2;
 
-  // Drift particles upward slowly
-  let t = 0;
-  function driftParticles() {
-    t += 0.003;
-    const arr = geo.attributes.position.array;
-    for (let i = 0; i < count; i++) {
-      arr[i * 3 + 1] += 0.0012;
-      if (arr[i * 3 + 1] > 5) arr[i * 3 + 1] = -1;
-    }
-    geo.attributes.position.needsUpdate = true;
-  }
-  window._driftParticles = driftParticles;
-})();
+        if (lb) lb.style.width = '100%';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// RENDER LOOP
-// ═══════════════════════════════════════════════════════════════════════════
-// Apply initial idle pose
-applyPose(IDLE_POSE, 0);
+        // Hide loader
+        setTimeout(() => {
+            const overlay = document.getElementById('load-overlay');
+            if (overlay) overlay.classList.add('hidden');
+        }, 400);
 
-function animate(t) {
-  requestAnimationFrame(animate);
-  TWEEN.update(t);
-  idleStep(t);
-  if (window._driftParticles) window._driftParticles();
-  renderer.render(scene, camera);
-}
-animate(0);
+        // Notify Flutter: avatar is ready to receive signs
+        if (window.FlutterBridge) {
+            FlutterBridge.postMessage(JSON.stringify({ type: 'ready' }));
+        }
 
-// ── Hide loading overlay ────────────────────────────────────────────────────
-window.addEventListener('load', () => {
-  const loading = document.getElementById('loading');
-  setTimeout(() => {
-    loading.classList.add('hidden');
-    setTimeout(() => loading.remove(), 700);
-    _postToFlutter({ type: 'ready' });
-  }, 800);
-});
+        console.log('✅ Avatar ready. rightArm:', rightArmBone?.name ?? 'NOT FOUND',
+                    'leftArm:', leftArmBone?.name ?? 'NOT FOUND',
+                    'head:', headBone?.name ?? 'NOT FOUND');
+    }, (err) => {
+        console.error('GLB parse error:', err);
+        if (lb) { lb.style.background = '#e74c3c'; lb.style.width = '100%'; }
+    });
+};
 </script>
 </body>
 </html>

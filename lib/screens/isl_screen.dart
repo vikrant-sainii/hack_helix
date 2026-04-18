@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -15,8 +16,6 @@ import '../models/enriched_sign.dart';
 ///   IslIdle        → Welcome + mic FAB
 ///   IslListening   → Large live transcript + pulsing glow bar
 ///   IslProcessing  → "Translating..." shimmer
-///   IslPlaying     → Spoken text + Three.js WebView signing avatar
-///   IslDone        → "Done signing" + replay/reset option
 class IslScreen extends StatefulWidget {
   const IslScreen({super.key});
 
@@ -31,8 +30,12 @@ class _IslScreenState extends State<IslScreen>
 
   // ── WebView ───────────────────────────────────────────────────────────────
   late final WebViewController _webCtrl;
-  bool _webReady = false;
-  bool _sequenceSent = false; // guard: only call playSequence once per sequence
+  bool _webReady    = false;
+  bool _avatarReady = false;  // true after JS fires 'ready' (GLB parsed)
+  bool _sequenceSent = false;
+
+  // Signs buffered while avatar is still loading
+  List<EnrichedSign>? _pendingSigns;
 
   @override
   void initState() {
@@ -47,15 +50,20 @@ class _IslScreenState extends State<IslScreen>
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF0A0E1A))
       ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) => setState(() => _webReady = true),
+        onPageFinished: (_) {
+          setState(() => _webReady = true);
+          _injectGLB(); // bypass XHR: push GLB bytes from Flutter → JS
+        },
         onWebResourceError: (e) =>
-            debugPrint('[WebView] Error: ${e.description}'),
+            debugPrint('[WebView] Error: ${e.description} | url: ${e.url}'),
       ))
       ..addJavaScriptChannel(
         'FlutterBridge',
         onMessageReceived: (msg) => _handleWebMessage(msg.message),
-      )
-      ..loadFlutterAsset('assets/avatar/index.html');
+      );
+
+    // Load HTML with ALL JS inlined — zero external file requests
+    _loadInlinedHtml();
   }
 
   @override
@@ -76,21 +84,100 @@ class _IslScreenState extends State<IslScreen>
       } else if (type == 'sequenceCompleted') {
         context.read<IslBloc>().add(const IslSequenceCompleted());
       } else if (type == 'ready') {
-        // WebView finished loading avatar
+        // Avatar GLB parsed — model is live
+        setState(() => _avatarReady = true);
         debugPrint('[WebView] Avatar ready');
+        // Replay any sign sequence that arrived while loading
+        if (_pendingSigns != null) {
+          _sendToAvatar(_pendingSigns!);
+          _pendingSigns = null;
+        }
       }
     } catch (e) {
       debugPrint('[WebView] message parse error: $e');
     }
   }
 
+  // ── Inline HTML builder ───────────────────────────────────────────────────
+  // Reads the new source-based avatar HTML and inlines Three.js + GLTFLoader
+  // directly into the page string before handing to loadHtmlString().
+  // This sidesteps Android WebView's file:// CORS block entirely.
+  Future<void> _loadInlinedHtml() async {
+    try {
+      debugPrint('[ISL] Reading assets for inline injection...');
+      final results = await Future.wait([
+        rootBundle.loadString('assets/avatar/index.html'),
+        rootBundle.loadString('assets/avatar/js/three.min.js'),
+        rootBundle.loadString('assets/avatar/js/GLTFLoader.umd.js'),
+      ]);
+
+      final html = results[0]
+          .replaceFirst('<script>/* THREE_PLACEHOLDER */</script>',
+                        '<script>\n${results[1]}\n</script>')
+          .replaceFirst('<script>/* GLTF_PLACEHOLDER */</script>',
+                        '<script>\n${results[2]}\n</script>');
+
+      final ok = !html.contains('THREE_PLACEHOLDER') &&
+                 !html.contains('GLTF_PLACEHOLDER');
+      debugPrint('[ISL] Injection OK=$ok  HTML=${html.length} chars');
+      await _webCtrl.loadHtmlString(html);
+    } catch (e) {
+      debugPrint('[ISL] _loadInlinedHtml error: $e');
+    }
+  }
+
   // ── Flutter → Three.js bridge ─────────────────────────────────────────────
 
   Future<void> _playSigns(List<EnrichedSign> signs) async {
-    if (!_webReady || _sequenceSent) return;
+    if (!_webReady) return; // page not yet loaded
+    if (_avatarReady) {
+      _sendToAvatar(signs);
+    } else {
+      // Avatar still loading GLB — buffer until 'ready'
+      _pendingSigns = signs;
+    }
+  }
+
+  void _sendToAvatar(List<EnrichedSign> signs) {
+    if (_sequenceSent) return;
     _sequenceSent = true;
     final json = jsonEncode(signs.map((s) => s.toJson()).toList());
-    await _webCtrl.runJavaScript('window.playSequence($json)');
+    _webCtrl.runJavaScript('window.playSequence($json)');
+  }
+
+  // ── GLB byte injection — avoids XHR file:// restriction 
+  // Flutter reads asset → base64 → sends in 512 KB chunks → JS gltfLoader.parse()
+  Future<void> _injectGLB() async {
+    try {
+      debugPrint('[ISL] Loading GLB from assets...');
+      final ByteData data =
+          await rootBundle.load('assets/avatar/models/avatar.glb');
+      final Uint8List bytes = data.buffer.asUint8List();
+      final String b64 = base64Encode(bytes);
+      debugPrint('[ISL] GLB encoded: ${b64.length} chars, sending to JS');
+
+      // Init chunks array
+      await _webCtrl.runJavaScript('window._glbChunks = [];');
+
+      // Push in 512 KB slices
+      const int chunkSize = 524288;
+      for (int i = 0; i < b64.length; i += chunkSize) {
+        final int end =
+            (i + chunkSize < b64.length) ? i + chunkSize : b64.length;
+        final String chunk = b64.substring(i, end);
+        final double pct = (end / b64.length * 90); // up to 90%
+        await _webCtrl.runJavaScript(
+          'window._glbChunks.push("$chunk");'
+          'var lb=document.getElementById("load-bar");'
+          'if(lb)lb.style.width="${pct.toStringAsFixed(0)}%";',
+        );
+      }
+
+      debugPrint('[ISL] All chunks sent — triggering parse');
+      await _webCtrl.runJavaScript('window.assembleAndLoadGLB();');
+    } catch (e) {
+      debugPrint('[ISL] GLB inject error: $e');
+    }
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
@@ -114,7 +201,22 @@ class _IslScreenState extends State<IslScreen>
           builder: (ctx, state) => SafeArea(
             child: Stack(
               children: [
-                // ── Main content ─────────────────────────────────────
+                // ── Three.js avatar WebView — remains in tree to avoid reloads
+                Positioned.fill(
+                  child: Visibility(
+                    visible: state is IslPlayingSequence || state is IslSequenceDone,
+                    maintainState: true,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 140, bottom: 80),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: WebViewWidget(controller: _webCtrl),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── Main UI content ───────────────────────────────────
                 _buildMainContent(state),
 
                 // ── Top status chip ───────────────────────────────────
@@ -277,11 +379,6 @@ class _IslScreenState extends State<IslScreen>
           ),
         ),
         const Spacer(),
-        // Avatar WebView pre-loaded in background
-        SizedBox(
-          height: 0,
-          child: WebViewWidget(controller: _webCtrl),
-        ),
         const SizedBox(height: 120),
       ],
     );
@@ -342,7 +439,7 @@ class _IslScreenState extends State<IslScreen>
                 '"${state.spokenText}"',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
+                  color: Colors.white.withValues(alpha: 0.7),
                   fontSize: 20,
                   fontStyle: FontStyle.italic,
                   height: 1.4,
@@ -379,21 +476,14 @@ class _IslScreenState extends State<IslScreen>
           ),
         ),
         const SizedBox(height: 8),
-        // Three.js avatar WebView — fills remaining space
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: WebViewWidget(controller: _webCtrl),
-          ),
-        ),
+        // Spoken text display moves up, WebView is now in the persistent Stack above
+        const SizedBox(height: 20),
         // Done: Show replay option
         if (isDone) ...[
           const SizedBox(height: 12),
           TextButton.icon(
-            onPressed: () =>
-                context.read<IslBloc>().add(const IslReset()),
-            icon: const Icon(Icons.replay_rounded,
-                color: Color(0xFF6C63FF)),
+            onPressed: () => context.read<IslBloc>().add(const IslReset()),
+            icon: const Icon(Icons.replay_rounded, color: Color(0xFF6C63FF)),
             label: const Text(
               'Speak again',
               style: TextStyle(color: Color(0xFF6C63FF), fontSize: 15),
@@ -401,7 +491,7 @@ class _IslScreenState extends State<IslScreen>
           ),
         ],
         SizedBox(height: isDone ? 24.0 : 80.0),
-      ],
+      ]
     );
   }
 
