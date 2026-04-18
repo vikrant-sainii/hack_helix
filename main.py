@@ -71,22 +71,31 @@ async def enrich_glosses(request: EnrichRequest):
             db_nmm = db_data.get("nmm", {"face": "neutral", "head": "neutral"})
             
             # --- Keyframe Scaling Logic ---
-            # If DB duration is 1.0s and requested is 1.5s, scale_factor = 1.5
-            scale_factor = item.duration / db_duration if db_duration > 0 else 1.0
+            # Use Database duration to ensure the action matches the recorded keyframes
+            db_duration = float(db_data.get("duration", 1.0))
+            
+            # Safety: Ensure duration covers the entire keyframe sequence
+            if db_keyframes:
+                max_kf_time = max([float(kf.get("time", 0)) for kf in db_keyframes])
+                db_duration = max(db_duration, max_kf_time)
+
+            # Ignore n8n duration and use DB duration for natural speed
+            final_duration = db_duration
+            scale_factor = 1.0 
             
             scaled_keyframes = []
             for kf in db_keyframes:
                 new_kf = kf.copy()
                 if "time" in kf:
-                    # Rounding to 3 decimal places for precision/cleanliness
-                    new_kf["time"] = round(float(kf["time"]) * scale_factor, 3)
+                    # Keep natural timing as recorded in DB
+                    new_kf["time"] = round(float(kf["time"]), 3)
                 scaled_keyframes.append(new_kf)
             
             # Construct the enriched sign
-            # duration_ms is converted to milliseconds for Three.js
+            # duration_ms is now based on the DB duration
             enriched_sequence.append(EnrichedSign(
                 gloss=item.action,
-                duration_ms=int(item.duration * 1000),
+                duration_ms=int(final_duration * 1000),
                 keyframes=scaled_keyframes,
                 nmm=db_nmm
             ))
