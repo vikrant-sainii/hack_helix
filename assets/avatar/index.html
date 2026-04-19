@@ -105,10 +105,12 @@ const headDictionary = {
 // ─────────────────────────────────────────────────────────────────────────────
 // AVATAR STATE
 // ─────────────────────────────────────────────────────────────────────────────
-let avatar       = null;
-let rightArmBone = null;
-let leftArmBone  = null;
-let headBone     = null;
+let avatar           = null;
+let headBone         = null;
+let rightArmBone     = null;
+let rightForeArmBone = null;
+let leftArmBone      = null;
+let leftForeArmBone  = null;
 
 function applyNMM(nmmData) {
     if (!nmmData || !avatar) return;
@@ -134,8 +136,36 @@ function applyNMM(nmmData) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ANIMATION ENGINE
+// VECTOR ANIMATION ENGINE (LANDMARKS → ROTATIONS)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maps a direction vector [start -> end] to a Mixamo bone's rotation.
+ * In standard Mixamo models, the bone's primary axis is +Y.
+ */
+/**
+ * Maps a direction vector [start -> end] to a Mixamo bone's rotation.
+ * MediaPipe landmarks: [0-1] range, Y-down.
+ * Three.js: World-up is Y, camera looks towards -Z.
+ */
+let morphMeshes = []; // Cache for facial meshes to speed up lip-sync
+
+function setBoneOrientation(bone, startVec, endVec, isLeft) {
+    if (!bone || !startVec || !endVec) return;
+
+    // 1. Calculate target direction in 3D space
+    const targetDir = new THREE.Vector3(
+        (endVec[0] - startVec[0]),
+        -(endVec[1] - startVec[1]), 
+        -(endVec[2] - startVec[2])
+    ).normalize();
+
+    // 2. Calculate rotation
+    const boneDir = new THREE.Vector3(isLeft ? -1 : 1, 0, 0);
+    const quat = new THREE.Quaternion().setFromUnitVectors(boneDir, targetDir);
+    bone.quaternion.copy(quat);
+}
+
 const clock = new THREE.Clock();
 
 let activeSign       = null;
@@ -147,6 +177,15 @@ let loopSequence      = true;
 let currentSignsHash  = '';
 
 function lerp(start, end, t) { return start + (end - start) * t; }
+
+function lerpVec(a, b, t) {
+    if (!a || !b) return null;
+    return [
+        lerp(a[0], b[0], t),
+        lerp(a[1], b[1], t),
+        lerp(a[2], b[2], t)
+    ];
+}
 
 function animate() {
     requestAnimationFrame(animate);
@@ -194,21 +233,57 @@ function animate() {
             const segDur = frameB.time - frameA.time;
             const progress = segDur > 0 ? (elapsed - frameA.time) / segDur : 1;
 
-            if (frameA.RightHand && frameB.RightHand && rightArmBone) {
-                rightArmBone.rotation.set(
-                    lerp(frameA.RightHand[0], frameB.RightHand[0], progress),
-                    lerp(frameA.RightHand[1], frameB.RightHand[1], progress),
-                    lerp(frameA.RightHand[2], frameB.RightHand[2], progress)
-                );
+            // ── Lip Sync (Safety Checks Added) ────────────────────
+            let mouthWeight = 0;
+            if (frameA.Mouth && frameB.Mouth && frameA.Mouth.top && frameA.Mouth.bottom) {
+                const top = lerpVec(frameA.Mouth.top, frameB.Mouth.top, progress);
+                const bottom = lerpVec(frameA.Mouth.bottom, frameB.Mouth.bottom, progress);
+                if (top && bottom) {
+                    const lipDist = Math.abs(bottom[1] - top[1]);
+                    mouthWeight = Math.min(1.0, lipDist * 25);
+                }
             }
-            if (frameA.LeftHand && frameB.LeftHand && leftArmBone) {
-                leftArmBone.rotation.set(
-                    lerp(frameA.LeftHand[0], frameB.LeftHand[0], progress),
-                    lerp(frameA.LeftHand[1], frameB.LeftHand[1], progress),
-                    lerp(frameA.LeftHand[2], frameB.LeftHand[2], progress)
-                );
-            } else if (leftArmBone) {
-                leftArmBone.rotation.set(0, 0, 0);
+
+            // Apply Lip Sync using Cache (Fast)
+            for (let mesh of morphMeshes) {
+                const idx = mesh.morphTargetDictionary['jawOpen'] || mesh.morphTargetDictionary['MouthOpen'];
+                if (idx !== undefined) {
+                    mesh.morphTargetInfluences[idx] = mouthWeight;
+                }
+            }
+
+            // ── Right Arm ──────────────────────────────────────────
+            if (frameA.RightArm && frameB.RightArm) {
+                const s = lerpVec(frameA.RightArm.shoulder, frameB.RightArm.shoulder, progress);
+                const e = lerpVec(frameA.RightArm.elbow,    frameB.RightArm.elbow,    progress);
+                const w = lerpVec(frameA.RightArm.wrist,    frameB.RightArm.wrist,    progress);
+                
+                if (s && e && w) {
+                    setBoneOrientation(rightArmBone, s, e, false);
+                    setBoneOrientation(rightForeArmBone, e, w, false);
+
+                    const distXY = Math.sqrt(Math.pow(w[0]-s[0], 2) + Math.pow(w[1]-s[1], 2));
+                    if (distXY < 0.15 && rightForeArmBone) {
+                        rightForeArmBone.rotation.z -= 0.5; 
+                    }
+                }
+            }
+
+            // ── Left Arm ───────────────────────────────────────────
+            if (frameA.LeftArm && frameB.LeftArm) {
+                const s = lerpVec(frameA.LeftArm.shoulder, frameB.LeftArm.shoulder, progress);
+                const e = lerpVec(frameA.LeftArm.elbow,    frameB.LeftArm.elbow,    progress);
+                const w = lerpVec(frameA.LeftArm.wrist,    frameB.LeftArm.wrist,    progress);
+                
+                if (s && e && w) {
+                    setBoneOrientation(leftArmBone, s, e, true);
+                    setBoneOrientation(leftForeArmBone, e, w, true);
+
+                    const distXY = Math.sqrt(Math.pow(w[0]-s[0], 2) + Math.pow(w[1]-s[1], 2));
+                    if (distXY < 0.15 && leftForeArmBone) {
+                        leftForeArmBone.rotation.z += 0.5;
+                    }
+                }
             }
         }
     }
@@ -276,12 +351,26 @@ window.assembleAndLoadGLB = function() {
         avatar = gltf.scene;
         scene.add(avatar);
 
-        rightArmBone = avatar.getObjectByName('RightArm')
-                    || avatar.getObjectByName('mixamorigRightArm');
-        leftArmBone  = avatar.getObjectByName('LeftArm')
-                    || avatar.getObjectByName('mixamorigLeftArm');
-        headBone     = avatar.getObjectByName('Head')
-                    || avatar.getObjectByName('mixamorigHead');
+        rightArmBone = avatar.getObjectByName('mixamorigRightArm') 
+                    || avatar.getObjectByName('RightArm');
+        rightForeArmBone = avatar.getObjectByName('mixamorigRightForeArm')
+                    || avatar.getObjectByName('RightForeArm');
+        
+        leftArmBone  = avatar.getObjectByName('mixamorigLeftArm')
+                    || avatar.getObjectByName('LeftArm');
+        leftForeArmBone = avatar.getObjectByName('mixamorigLeftForeArm')
+                    || avatar.getObjectByName('LeftForeArm');
+                    
+        headBone     = avatar.getObjectByName('mixamorigHead')
+                    || avatar.getObjectByName('Head');
+
+        // Populate morph target cache for lip-sync performance
+        morphMeshes = [];
+        avatar.traverse((node) => {
+            if (node.isMesh && node.morphTargetDictionary) {
+                morphMeshes.push(node);
+            }
+        });
 
         const box    = new THREE.Box3().setFromObject(avatar);
         const size   = box.getSize(new THREE.Vector3());
