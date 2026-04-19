@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ISL Translator</title>
+    <title>ISL Translator - CrisisMatch AI</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -82,7 +82,7 @@ window.addEventListener('resize', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FACIAL-EXPRESSION DICTIONARY
+// STATIC NMM DICTIONARY (For general moods)
 // ─────────────────────────────────────────────────────────────────────────────
 const faceDictionary = {
     'neutral'  : {},
@@ -109,27 +109,13 @@ let leftArmBone      = null;
 let leftForeArmBone  = null;
 let morphMeshes      = []; 
 
-function applyNMM(nmmData) {
+function applyStaticNMM(nmmData) {
     if (!nmmData || !avatar) return;
 
     if (headBone && nmmData.head) {
         const rot = headDictionary[nmmData.head] || headDictionary['neutral'];
         headBone.rotation.set(rot[0], rot[1], rot[2]);
     }
-
-    const faceSettings = faceDictionary[nmmData.face] || faceDictionary['neutral'];
-    avatar.traverse((node) => {
-        if (node.isMesh && node.morphTargetDictionary) {
-            for (const key in node.morphTargetDictionary) {
-                node.morphTargetInfluences[node.morphTargetDictionary[key]] = 0;
-            }
-            for (const muscle in faceSettings) {
-                if (node.morphTargetDictionary[muscle] !== undefined) {
-                    node.morphTargetInfluences[node.morphTargetDictionary[muscle]] = faceSettings[muscle];
-                }
-            }
-        }
-    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,38 +124,34 @@ function applyNMM(nmmData) {
 
 /**
  * Maps a true 3D direction vector to a Mixamo bone's rotation.
- * Safely handles Local vs World space to prevent compounding rotations.
+ * Handles Local vs World space and Mixamo's +Y Rest Pose.
  */
 function setBoneOrientation(bone, startVec, endVec) {
     if (!bone || !startVec || !endVec) return;
 
     // 1. Calculate direction and map to Three.js World Space axes
-    // MediaPipe (Y down, Z forward) -> Three.js (Y up, Z backward)
     const targetDir = new THREE.Vector3(
         (endVec[0] - startVec[0]),
         -(endVec[1] - startVec[1]), 
         -(endVec[2] - startVec[2])
     );
 
-    // Prevent NaN math errors if joints overlap perfectly
     if (targetDir.lengthSq() === 0) return;
     targetDir.normalize();
 
     // 2. Prevent the "Pretzel Effect" (Local Space Conversion)
-    // Convert absolute world direction into relative local direction for the bone
     if (bone.parent) {
         bone.parent.updateMatrixWorld(true); 
         const parentInverse = new THREE.Matrix4().copy(bone.parent.matrixWorld).invert();
         targetDir.transformDirection(parentInverse);
     }
 
-    // 3. Mixamo T-Pose Default Direction
-    // Mixamo bones rest pointing along the local +Y axis
+    // 3. Mixamo T-Pose Default Direction (+Y Axis)
     const boneRestDir = new THREE.Vector3(0, 1, 0);
 
     // 4. Apply the clean rotation
     const quat = new THREE.Quaternion().setFromUnitVectors(boneRestDir, targetDir);
-    bone.quaternion.copy(quat); // Sync instantly with lerpVec, no lag
+    bone.quaternion.copy(quat);
 }
 
 const clock = new THREE.Clock();
@@ -218,7 +200,7 @@ function animate() {
             activeSign = nextSign;
             signStartTime = clock.getElapsedTime();
 
-            applyNMM(nextSign.nmm);
+            applyStaticNMM(nextSign.nmm);
 
             if (window.FlutterBridge) {
                 FlutterBridge.postMessage(JSON.stringify({ type: 'signStarted', index: sequenceIndex }));
@@ -239,22 +221,60 @@ function animate() {
             const segDur = frameB.time - frameA.time;
             const progress = segDur > 0 ? (elapsed - frameA.time) / segDur : 1;
 
-            // ── Lip Sync ────────────────────
-            let mouthWeight = 0;
-            if (frameA.Mouth && frameB.Mouth && frameA.Mouth.top && frameA.Mouth.bottom) {
-                const top = lerpVec(frameA.Mouth.top, frameB.Mouth.top, progress);
-                const bottom = lerpVec(frameA.Mouth.bottom, frameB.Mouth.bottom, progress);
-                if (top && bottom) {
-                    const lipDist = Math.abs(bottom[1] - top[1]);
-                    mouthWeight = Math.min(1.0, lipDist * 25);
+            // ── Dynamic Facial Expressions (NMMs) ────────────────────
+            let morphWeights = {
+                jawOpen: 0, mouthSmile: 0, 
+                blinkLeft: 0, blinkRight: 0, 
+                browUpLeft: 0, browUpRight: 0, browDown: 0
+            };
+
+            if (frameA.Face && frameB.Face && frameA.Face.jaw_top) {
+                const jawT = lerpVec(frameA.Face.jaw_top, frameB.Face.jaw_top, progress);
+                const jawB = lerpVec(frameA.Face.jaw_bottom, frameB.Face.jaw_bottom, progress);
+                const mouthL = lerpVec(frameA.Face.mouth_left, frameB.Face.mouth_left, progress);
+                const mouthR = lerpVec(frameA.Face.mouth_right, frameB.Face.mouth_right, progress);
+                const eyeLT = lerpVec(frameA.Face.eye_left_top, frameB.Face.eye_left_top, progress);
+                const eyeLB = lerpVec(frameA.Face.eye_left_bottom, frameB.Face.eye_left_bottom, progress);
+                const eyeRT = lerpVec(frameA.Face.eye_right_top, frameB.Face.eye_right_top, progress);
+                const eyeRB = lerpVec(frameA.Face.eye_right_bottom, frameB.Face.eye_right_bottom, progress);
+                const browL = lerpVec(frameA.Face.brow_left, frameB.Face.brow_left, progress);
+                const browR = lerpVec(frameA.Face.brow_right, frameB.Face.brow_right, progress);
+
+                if (jawT && jawB && mouthL && mouthR && eyeLT && eyeLB && eyeRT && eyeRB && browL && browR) {
+                    const calcDist = (p1, p2) => Math.hypot(p2[0]-p1[0], p2[1]-p1[1], p2[2]-p1[2]);
+
+                    // Jaw & Lips
+                    morphWeights.jawOpen = Math.min(1.0, calcDist(jawT, jawB) * 25);
+                    morphWeights.mouthSmile = Math.max(0, Math.min(1.0, (calcDist(mouthL, mouthR) - 0.08) * 20));
+
+                    // Blinks
+                    morphWeights.blinkLeft = calcDist(eyeLT, eyeLB) < 0.012 ? 1.0 : 0.0;
+                    morphWeights.blinkRight = calcDist(eyeRT, eyeRB) < 0.012 ? 1.0 : 0.0;
+
+                    // Brows
+                    let leftBrowDist = calcDist(browL, eyeLT);
+                    let rightBrowDist = calcDist(browR, eyeRT);
+                    morphWeights.browUpLeft = Math.max(0, Math.min(1.0, (leftBrowDist - 0.04) * 30));
+                    morphWeights.browUpRight = Math.max(0, Math.min(1.0, (rightBrowDist - 0.04) * 30));
+                    morphWeights.browDown = Math.max(0, Math.min(1.0, (0.035 - leftBrowDist) * 40));
                 }
             }
 
+            // Apply dynamic face weights to meshes
             for (let mesh of morphMeshes) {
-                const idx = mesh.morphTargetDictionary['jawOpen'] || mesh.morphTargetDictionary['MouthOpen'];
-                if (idx !== undefined) {
-                    mesh.morphTargetInfluences[idx] = mouthWeight;
+                const dict = mesh.morphTargetDictionary;
+                if (!dict) continue;
+
+                if (dict['jawOpen'] !== undefined) mesh.morphTargetInfluences[dict['jawOpen']] = morphWeights.jawOpen;
+                if (dict['mouthSmile'] !== undefined) mesh.morphTargetInfluences[dict['mouthSmile']] = morphWeights.mouthSmile;
+                if (dict['eyeBlinkLeft'] !== undefined) mesh.morphTargetInfluences[dict['eyeBlinkLeft']] = morphWeights.blinkLeft;
+                if (dict['eyeBlinkRight'] !== undefined) mesh.morphTargetInfluences[dict['eyeBlinkRight']] = morphWeights.blinkRight;
+                
+                if (dict['browInnerUp'] !== undefined) {
+                    mesh.morphTargetInfluences[dict['browInnerUp']] = Math.max(morphWeights.browUpLeft, morphWeights.browUpRight);
                 }
+                if (dict['browDownLeft'] !== undefined) mesh.morphTargetInfluences[dict['browDownLeft']] = morphWeights.browDown;
+                if (dict['browDownRight'] !== undefined) mesh.morphTargetInfluences[dict['browDownRight']] = morphWeights.browDown;
             }
 
             // ── Right Arm ──────────────────────────────────────────
@@ -306,7 +326,7 @@ window.playSequence = function(signsJson) {
     activeSign        = signs[0];
     signStartTime     = clock.getElapsedTime();
 
-    applyNMM(signs[0].nmm);
+    applyStaticNMM(signs[0].nmm);
 
     if (window.FlutterBridge) {
         FlutterBridge.postMessage(JSON.stringify({ type: 'signStarted', index: 0 }));
@@ -318,7 +338,7 @@ window.resetAvatar = function() {
     currentSignsHash = '';
     activeSign = null;
     sequenceQueue = [];
-    applyNMM({ face: 'neutral', head: 'neutral' });
+    applyStaticNMM({ face: 'neutral', head: 'neutral' });
     if (rightArmBone) rightArmBone.rotation.set(0, 0, 0);
     if (leftArmBone)  leftArmBone.rotation.set(0, 0, 0);
     if (headBone)     headBone.rotation.set(0, 0, 0);
