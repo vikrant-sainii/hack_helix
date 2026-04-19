@@ -143,10 +143,13 @@ class IslBloc extends Bloc<IslEvent, IslState> {
     _IslSpeechFinished event,
     Emitter<IslState> emit,
   ) async {
-    // Use what was captured, or default to a demo phrase
-    final spokenText =
-        event.text.isNotEmpty ? event.text : 'ISL Demo — LIFE MY DANGER';
+    // If nothing was captured, show the error state (Try Again button)
+    if (event.text.isEmpty) {
+      emit(const IslError("Couldn't hear anything. Please try again."));
+      return;
+    }
 
+    final spokenText = event.text;
     emit(IslProcessingText(spokenText));
 
     // Brief artificial delay to show "Processing..." state

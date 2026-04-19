@@ -44,15 +44,12 @@
 </head>
 <body>
 
-<!-- Minimal Loading overlay -->
 <div id="load-overlay">
     <div id="load-logo">ISL</div>
     <div id="load-track"><div id="load-bar"></div></div>
 </div>
 
-<!-- THREE.JS — injected inline by Flutter (_loadInlinedHtml) -->
 <script>/* THREE_PLACEHOLDER */</script>
-<!-- GLTF LOADER -->
 <script>/* GLTF_PLACEHOLDER */</script>
 
 <script>
@@ -60,18 +57,17 @@
 // SCENE SETUP
 // ─────────────────────────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0A0E1A); // Restored dark background
+scene.background = new THREE.Color(0x0A0E1A); 
 
 const camera = new THREE.PerspectiveCamera(
     45, window.innerWidth / window.innerHeight, 0.1, 1000
 );
-// Start at a default position; we re-center once model loads
 camera.position.set(0, 0.6, 5.5);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x000000, 0); // Transparent black
+renderer.setClearColor(0x000000, 0); 
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
@@ -111,6 +107,7 @@ let rightArmBone     = null;
 let rightForeArmBone = null;
 let leftArmBone      = null;
 let leftForeArmBone  = null;
+let morphMeshes      = []; 
 
 function applyNMM(nmmData) {
     if (!nmmData || !avatar) return;
@@ -140,30 +137,39 @@ function applyNMM(nmmData) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Maps a direction vector [start -> end] to a Mixamo bone's rotation.
- * In standard Mixamo models, the bone's primary axis is +Y.
+ * Maps a true 3D direction vector to a Mixamo bone's rotation.
+ * Safely handles Local vs World space to prevent compounding rotations.
  */
-/**
- * Maps a direction vector [start -> end] to a Mixamo bone's rotation.
- * MediaPipe landmarks: [0-1] range, Y-down.
- * Three.js: World-up is Y, camera looks towards -Z.
- */
-let morphMeshes = []; // Cache for facial meshes to speed up lip-sync
-
-function setBoneOrientation(bone, startVec, endVec, isLeft) {
+function setBoneOrientation(bone, startVec, endVec) {
     if (!bone || !startVec || !endVec) return;
 
-    // 1. Calculate target direction in 3D space
+    // 1. Calculate direction and map to Three.js World Space axes
+    // MediaPipe (Y down, Z forward) -> Three.js (Y up, Z backward)
     const targetDir = new THREE.Vector3(
         (endVec[0] - startVec[0]),
         -(endVec[1] - startVec[1]), 
         -(endVec[2] - startVec[2])
-    ).normalize();
+    );
 
-    // 2. Calculate rotation
-    const boneDir = new THREE.Vector3(isLeft ? -1 : 1, 0, 0);
-    const quat = new THREE.Quaternion().setFromUnitVectors(boneDir, targetDir);
-    bone.quaternion.copy(quat);
+    // Prevent NaN math errors if joints overlap perfectly
+    if (targetDir.lengthSq() === 0) return;
+    targetDir.normalize();
+
+    // 2. Prevent the "Pretzel Effect" (Local Space Conversion)
+    // Convert absolute world direction into relative local direction for the bone
+    if (bone.parent) {
+        bone.parent.updateMatrixWorld(true); 
+        const parentInverse = new THREE.Matrix4().copy(bone.parent.matrixWorld).invert();
+        targetDir.transformDirection(parentInverse);
+    }
+
+    // 3. Mixamo T-Pose Default Direction
+    // Mixamo bones rest pointing along the local +Y axis
+    const boneRestDir = new THREE.Vector3(0, 1, 0);
+
+    // 4. Apply the clean rotation
+    const quat = new THREE.Quaternion().setFromUnitVectors(boneRestDir, targetDir);
+    bone.quaternion.copy(quat); // Sync instantly with lerpVec, no lag
 }
 
 const clock = new THREE.Clock();
@@ -192,7 +198,7 @@ function animate() {
 
     if (isPlayingSequence && activeSign && avatar) {
         const elapsed = clock.getElapsedTime() - signStartTime;
-        const duration = activeSign.duration_ms / 1000;
+        const duration = (activeSign.duration_ms !== undefined ? activeSign.duration_ms / 1000 : activeSign.duration);
 
         if (elapsed >= duration) {
             sequenceIndex++;
@@ -233,7 +239,7 @@ function animate() {
             const segDur = frameB.time - frameA.time;
             const progress = segDur > 0 ? (elapsed - frameA.time) / segDur : 1;
 
-            // ── Lip Sync (Safety Checks Added) ────────────────────
+            // ── Lip Sync ────────────────────
             let mouthWeight = 0;
             if (frameA.Mouth && frameB.Mouth && frameA.Mouth.top && frameA.Mouth.bottom) {
                 const top = lerpVec(frameA.Mouth.top, frameB.Mouth.top, progress);
@@ -244,7 +250,6 @@ function animate() {
                 }
             }
 
-            // Apply Lip Sync using Cache (Fast)
             for (let mesh of morphMeshes) {
                 const idx = mesh.morphTargetDictionary['jawOpen'] || mesh.morphTargetDictionary['MouthOpen'];
                 if (idx !== undefined) {
@@ -259,13 +264,8 @@ function animate() {
                 const w = lerpVec(frameA.RightArm.wrist,    frameB.RightArm.wrist,    progress);
                 
                 if (s && e && w) {
-                    setBoneOrientation(rightArmBone, s, e, false);
-                    setBoneOrientation(rightForeArmBone, e, w, false);
-
-                    const distXY = Math.sqrt(Math.pow(w[0]-s[0], 2) + Math.pow(w[1]-s[1], 2));
-                    if (distXY < 0.15 && rightForeArmBone) {
-                        rightForeArmBone.rotation.z -= 0.5; 
-                    }
+                    setBoneOrientation(rightArmBone, s, e);
+                    setBoneOrientation(rightForeArmBone, e, w);
                 }
             }
 
@@ -276,13 +276,8 @@ function animate() {
                 const w = lerpVec(frameA.LeftArm.wrist,    frameB.LeftArm.wrist,    progress);
                 
                 if (s && e && w) {
-                    setBoneOrientation(leftArmBone, s, e, true);
-                    setBoneOrientation(leftForeArmBone, e, w, true);
-
-                    const distXY = Math.sqrt(Math.pow(w[0]-s[0], 2) + Math.pow(w[1]-s[1], 2));
-                    if (distXY < 0.15 && leftForeArmBone) {
-                        leftForeArmBone.rotation.z += 0.5;
-                    }
+                    setBoneOrientation(leftArmBone, s, e);
+                    setBoneOrientation(leftForeArmBone, e, w);
                 }
             }
         }
@@ -364,7 +359,6 @@ window.assembleAndLoadGLB = function() {
         headBone     = avatar.getObjectByName('mixamorigHead')
                     || avatar.getObjectByName('Head');
 
-        // Populate morph target cache for lip-sync performance
         morphMeshes = [];
         avatar.traverse((node) => {
             if (node.isMesh && node.morphTargetDictionary) {
@@ -376,7 +370,6 @@ window.assembleAndLoadGLB = function() {
         const size   = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
 
-        // Target height fit for typical portrait view
         const targetHeight = 2.4;
         const scale = targetHeight / size.y;
         avatar.scale.setScalar(scale);
@@ -384,11 +377,8 @@ window.assembleAndLoadGLB = function() {
         box.setFromObject(avatar);
         box.getCenter(center);
         avatar.position.sub(center);
-        
-        // Push slightly higher to fit upper body
         avatar.position.y += 0.3; 
 
-        // Initial camera gaze
         camera.lookAt(0, 0.7, 0);
 
         if (lb) lb.style.width = '100%';

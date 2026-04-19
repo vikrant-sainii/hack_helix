@@ -254,6 +254,53 @@ class _IslScreenState extends State<IslScreen>
                     right: 0,
                     child: _buildGlowBar(state),
                   ),
+
+                // ── Speak Again button during playback ────────────────
+                if (state is IslPlayingSequence)
+                  Positioned(
+                    bottom: 32,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: GestureDetector(
+                        onTap: () {
+                          context.read<IslBloc>().add(const IslReset());
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 28, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6C63FF),
+                            borderRadius: BorderRadius.circular(40),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF6C63FF)
+                                    .withValues(alpha: 0.5),
+                                blurRadius: 20,
+                                spreadRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.mic_rounded,
+                                  color: Colors.white, size: 20),
+                              SizedBox(width: 10),
+                              Text(
+                                'Speak Again',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -617,6 +664,7 @@ class _IslScreenState extends State<IslScreen>
         final isProcessing = state is IslProcessingText;
         final isPlaying = state is IslPlayingSequence;
 
+        // FAB hidden during playback — "Speak Again" button is shown in Stack instead
         if (isPlaying) return const SizedBox.shrink();
 
         Color bgColor;
