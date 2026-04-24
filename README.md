@@ -1,17 +1,55 @@
-# hack_helix
+# 🧠 ISL Speech → Sign (Real-Time)
 
-A new Flutter project.
+> 🎤 Voice → 🧠 ISL Grammar → 🤟 Gesture Output
 
-## Getting Started
+Convert spoken Hindi/English into Indian Sign Language using NLP + 3D avatar using ISL grammar and official indian sign language videos.
 
-This project is a starting point for a Flutter application.
+---
 
-A few resources to get you started if this is your first Flutter project:
+## 🎥 Demo
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+<p align="center">
+  <img src="PHOTO-2026-04-24-18-50-15.jpg" width="250"/>
+  <img src="GIF-2026-04-25-01-26-23.gif" width="250"/>
+  <img src="PHOTO-2026-04-24-18-47-56.jpg" width="250"/>
+</p>
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## ⚡ What it does
+
+- 🎤 Speech → Text (Hindi + English)
+- 🧠 Converts to ISL grammar (not word-to-word)
+- 🔄 Reorders into topic-comment structure
+- 🤟 Generates gesture sequence
+- 🧍 Animates 3D avatar in real-time
+
+---
+## 🏗️ Flow
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/3140f655-a78b-4c49-9a44-91ea6c88e2d9" width="600"/>
+</p>
+
+---
+
+## 🛠️ Tech
+
+Flutter • FastAPI • n8n • OpenAI • Supabase • Three.js
+
+---
+
+## 👨‍💻 Contribution
+
+Vikrant Saini (Me)- 
+Flutter + Integration + UI + supabase + three.js + GLB (3d avatar).
+
+Prathamesh Patil- N8N AI agent and NLP integration.
+
+Abhishek Sapkal - Video Parsing using python parsing 3D model, with 99.9 % accuracy.
+
+---
+
+## ⚡ Note
+
+⚡ Only 2 API calls → near real-time performance
